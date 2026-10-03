@@ -54,6 +54,28 @@
     <header class="chat-dialog-head"><div><span class="eyebrow">DEINE BIBLIOTHEK</span><h2 id="chatDialogTitle">Deine Chats</h2></div><button class="icon-button" id="closeChatDialog" aria-label="Chats schließen">×</button></header>
     <div class="chat-dialog-body"><button id="newChatButton" class="primary-button new-chat-button">＋ Neuer Chat</button><div id="chatList" class="chat-list" aria-live="polite"></div><p class="chat-library-note">Jeder Chat hat einen eigenen Verlauf. Memory und dein Name bleiben chatübergreifend erhalten.</p></div>
   </dialog>
+
+  <dialog id="voiceDialog" class="voice-dialog" aria-labelledby="voiceTitle">
+    <div class="voice-scene" data-state="connecting">
+      <header class="voice-header">
+        <div class="voice-brand"><img src="icons/bard.svg" alt=""><div><span class="eyebrow">BARD AI LIVE</span><strong id="voiceTitle">Sprachmodus</strong></div></div>
+        <button id="voiceClose" class="voice-icon-button" aria-label="Sprachmodus beenden">×</button>
+      </header>
+      <div class="voice-stage">
+        <div class="voice-orb" aria-hidden="true"><div class="voice-orb-aura"></div><div class="voice-orb-cloud cloud-one"></div><div class="voice-orb-cloud cloud-two"></div><div class="voice-orb-shine"></div><img src="icons/bard.svg" alt=""></div>
+        <div class="voice-live-state"><span class="voice-state-pip"></span><span id="voiceStateLabel">Verbindung wird aufgebaut …</span></div>
+        <p id="voiceStateHint" class="voice-state-hint">Einen Moment, ich richte den Live-Kanal ein.</p>
+        <div class="voice-captions" aria-live="polite"><p id="voiceUserCaption"></p><p id="voiceAssistantCaption"></p></div>
+      </div>
+      <footer class="voice-controls">
+        <button id="voiceMute" class="voice-control" aria-pressed="false"><span class="control-glyph">⌁</span><span>Mikro stumm</span></button>
+        <button id="voiceRetry" class="voice-control voice-retry hidden"><span class="control-glyph">↻</span><span>Nochmal verbinden</span></button>
+        <button id="voiceEnd" class="voice-end"><span>■</span> Gespräch beenden</button>
+      </footer>
+      <p class="voice-footnote">Live-Audio · Dein Mikrofon bleibt nur während dieses Gesprächs aktiv</p>
+    </div>
+  </dialog>
+
 <script src="app.js" type="module"></script>
 </body>
 </html>
