@@ -569,26 +569,41 @@ async function startLiveVoice(keepDialog = false) {
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
     const socket = new WebSocket(socketUrl); voice.socket = socket;
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Der Live-Kanal antwortet zu langsam. Bitte versuche es erneut.')), 45000);
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        callback(value);
+      };
+      const timeout = setTimeout(() => {
+        finish(reject, new Error('Der Live-Kanal hat innerhalb von 45 Sekunden keine Setup-Bestätigung gesendet.'));
+        try { socket.close(4000, 'Setup timeout'); } catch {}
+      }, 45000);
       socket.onopen = () => {
-        socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } }));
+        try { socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } })); }
+        catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
       };
       socket.onmessage = event => {
         let message;
-        try { message = JSON.parse(event.data); } catch { return; }
+        try { message = JSON.parse(event.data); }
+        catch { finish(reject, new Error('Der Live-Kanal hat eine ungültige Antwort gesendet.')); return; }
         if (message.setupComplete || message.setup_complete) {
-          clearTimeout(timeout); resolve(); return;
+          finish(resolve);
+          return;
+        }
+        if (message.error?.message) {
+          finish(reject, new Error(String(message.error.message).slice(0, 300)));
+          return;
         }
         handleVoiceMessage(message);
       };
-      socket.onerror = () => { clearTimeout(timeout); reject(new Error('Die Verbindung zu Bard AI Live ist fehlgeschlagen.')); };
+      socket.onerror = () => finish(reject, new Error('Die Verbindung zu Bard AI Live ist fehlgeschlagen.'));
       socket.onclose = event => {
-        clearTimeout(timeout);
-        if (voice.active && !voice.intentionalClose) {
-          const detail = event.reason ? event.reason.slice(0, 180) : 'Code ' + event.code;
-          if (!voice.isReady) reject(new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + detail + ').'));
-          else voiceFailure('Die Live-Verbindung wurde beendet (' + detail + '). Starte den Sprachmodus erneut.');
-        }
+        if (!voice.active || voice.intentionalClose) return;
+        const detail = event.reason ? event.reason.slice(0, 180) : 'Code ' + event.code;
+        if (!voice.isReady) finish(reject, new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + detail + ').'));
+        else voiceFailure('Die Live-Verbindung wurde beendet (' + detail + '). Starte den Sprachmodus erneut.');
       };
     });
     if (!voice.active) return;
