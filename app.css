@@ -363,3 +363,12 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .voice-settings-button [aria-hidden] { color:var(--cyan); font-size:17px; }
 .voice-settings-button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
 @media(max-width:600px) { .voice-settings-button { min-height:36px; padding:7px 9px; font-size:10px; } .composer-tools { flex-wrap:wrap; } .composer-tools > span { min-width:100%; order:3; text-align:left; } }
+
+.message-sources { margin-top: 12px; padding: 0 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-raised); }
+.message-sources summary { padding: 9px 0; color: var(--cyan); font-size: 11px; font-weight: 650; cursor: pointer; }
+.message-sources ul { display: grid; gap: 7px; margin: 0; padding: 0 0 11px; list-style: none; }
+.message-sources a { color: var(--muted-strong); font-size: 11px; line-height: 1.4; text-decoration-color: color-mix(in srgb, var(--cyan) 45%, transparent); overflow-wrap: anywhere; }
+.message-sources a:hover { color: var(--cyan); }
+.voice-preview-entry .generated-preview { grid-column: 1 / -1; width: 100%; margin: 6px 0 0; }
+.voice-preview-entry .generated-preview-frame { height: min(44svh, 340px); min-height: 200px; }
+@media(max-width:600px) { .voice-preview-entry .generated-preview-frame { height: 36svh; min-height: 190px; } }
