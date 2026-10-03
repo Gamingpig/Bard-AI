@@ -385,20 +385,36 @@ function renderMemory() {
   }
 }
 function remember(value) {
-  const fact = value.replace(/[\s.!?]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
-  if (!fact || state.memory.some(item => item.toLocaleLowerCase('de') === fact.toLocaleLowerCase('de'))) return false;
+  const fact = String(value || '').replace(/[\s.!?]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (!fact) return false;
+  const key = fact.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const existing = state.memory.findIndex(item => item.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === key);
+  if (existing >= 0) state.memory.splice(existing, 1);
   state.memory = [...state.memory, fact].slice(-12);
   localStorage.setItem('bard_memory', JSON.stringify(state.memory)); renderMemory();
   return true;
 }
+function assistantAskedForName() {
+  const previous = [...state.messages].reverse().find(item => item.role === 'assistant');
+  return Boolean(previous && /wie\s+(?:darf|soll|kann)\s+ich\s+dich\s+nennen|wie\s+heißt\s+du|wie\s+lautet\s+dein\s+name|was\s+ist\s+dein\s+name|welchen\s+namen\s+(?:soll|darf)\s+ich\s+(?:dir\s+geben|verwenden)/iu.test(previous.text || ''));
+}
 function captureConversationMemory(text) {
-  const normalized = text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  const normalized = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  let changed = false;
   const name = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bnenn mich|\bdu kannst mich nennen)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
-  if (name?.[1]) saveUserName(name[1]);
+  if (name?.[1]) { saveUserName(name[1]); changed = true; }
+  else if (!state.name && assistantAskedForName()) {
+    const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39})[.!]?$/iu);
+    const filler = new Set(['ja', 'nein', 'okay', 'ok', 'klar', 'hi', 'hallo', 'hey', 'test', 'bro', 'danke']);
+    if (shortAnswer && !filler.has(shortAnswer[1].toLocaleLowerCase('de'))) {
+      saveUserName(shortAnswer[1]); changed = true;
+    }
+  }
   const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte)[\s,:-]+(?:dass\s+)?(.+)/iu);
-  if (explicit?.[1]) return remember(explicit[1]);
-  const preference = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich lerne gerade)\s+(.+)/iu);
-  return preference ? remember(`${preference[1]} ${preference[2]}`) : false;
+  if (explicit?.[1]) changed = remember(explicit[1]) || changed;
+  const stableFact = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich spiele gern|ich mache gern|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+(.+)/iu);
+  if (stableFact?.[1]) changed = remember(stableFact[1] + ' ' + stableFact[2]) || changed;
+  return changed;
 }
 function renderMessages() {
   const rows = $('#messages'); rows.replaceChildren();
@@ -626,6 +642,7 @@ function saveVoiceTurn() {
   const userText = safeText(voice.turnUser).trim();
   const assistantText = safeText(voice.turnAssistant).trim();
   voice.turnUser = ''; voice.turnAssistant = '';
+  if (userText) captureConversationMemory(userText);
   const created = Date.now();
   if (userText) {
     const message = { id: crypto.randomUUID(), role: 'user', text: userText, created };
@@ -638,7 +655,6 @@ function saveVoiceTurn() {
   if (userText || assistantText) {
     $('#welcome').classList.add('compact');
     void persistMessages().catch(() => notice('Das Sprachgespräch konnte lokal nicht gespeichert werden.', true));
-    if (userText) captureConversationMemory(userText);
   }
 }
 async function startLiveVoice(keepDialog = false) {
@@ -805,11 +821,44 @@ function stopVoicePreview() {
   if (voicePreviewAudio?.source) {
     try { voicePreviewAudio.source.stop(); } catch {}
   }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   voicePreviewAudio = null;
   if (voicePreviewContext) {
     voicePreviewContext.close().catch(() => {});
     voicePreviewContext = null;
   }
+}
+function playSystemVoicePreview(name, button, run) {
+  if (!('speechSynthesis' in window)) return false;
+  voicePreviewContext?.close().catch(() => {});
+  voicePreviewContext = null;
+  const utterance = new SpeechSynthesisUtterance('Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?');
+  utterance.lang = 'de-DE';
+  const systemVoices = speechSynthesis.getVoices().filter(item => item.lang?.toLowerCase().startsWith('de'));
+  if (systemVoices.length) {
+    const index = [...name].reduce((sum, char) => sum + char.codePointAt(0), 0) % systemVoices.length;
+    utterance.voice = systemVoices[index];
+  }
+  const style = LIVE_VOICES.find(item => item.name === name)?.style || '';
+  utterance.pitch = /hell|jugendlich|lebhaft|lebendig/i.test(style) ? 1.12 : /rau|bestimmt|informativ|reif/i.test(style) ? 0.9 : 1;
+  utterance.rate = /energiegeladen|lebhaft|lebendig/i.test(style) ? 1.04 : 0.98;
+  utterance.onend = () => {
+    if (run !== voicePreviewRun || voicePreviewAudio?.utterance !== utterance) return;
+    voicePreviewAudio = null;
+    button.textContent = '▶ Anhören';
+    $('#voicePickerStatus').textContent = name + ' · System-Hörprobe beendet';
+  };
+  utterance.onerror = () => {
+    if (run !== voicePreviewRun) return;
+    voicePreviewAudio = null;
+    button.textContent = '▶ Anhören';
+    $('#voicePickerStatus').textContent = 'Die lokale Browser-Hörprobe konnte nicht abgespielt werden.';
+  };
+  voicePreviewAudio = { name, utterance };
+  speechSynthesis.speak(utterance);
+  button.textContent = '■ Stoppen';
+  $('#voicePickerStatus').textContent = name + ' · lokale System-Hörprobe (die Live-Stimme klingt anders)';
+  return true;
 }
 function voiceSampleBlob(sample) {
   const bytes = Uint8Array.from(atob(sample.data), char => char.charCodeAt(0));
@@ -866,8 +915,10 @@ async function playVoicePreview(name, button) {
     $('#voicePickerStatus').textContent = `${name} · Hörprobe läuft`;
   } catch (error) {
     if (run === voicePreviewRun) {
-      stopVoicePreview();
-      $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
+      if (!playSystemVoicePreview(name, button, run)) {
+        stopVoicePreview();
+        $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
+      }
     }
   } finally {
     button.disabled = false;
@@ -900,11 +951,13 @@ function renderVoicePicker() {
   }
 }
 updateVoicePickerTrigger();
-$('#voicePickerOpen').addEventListener('click', () => {
+function openVoicePicker() {
   renderVoicePicker();
   $('#voicePickerStatus').textContent = '';
   $('#voicePickerDialog').showModal();
-});
+}
+$('#voicePickerOpen').addEventListener('click', openVoicePicker);
+$('#voicePickerSettingsOpen').addEventListener('click', openVoicePicker);
 $('#voicePickerClose').addEventListener('click', () => $('#voicePickerDialog').close());
 $('#voicePickerDialog').addEventListener('close', stopVoicePreview);
 $('#voicePickerDialog').addEventListener('click', event => { if (event.target === $('#voicePickerDialog')) $('#voicePickerDialog').close(); });
