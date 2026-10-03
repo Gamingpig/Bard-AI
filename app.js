@@ -110,7 +110,11 @@ async function requestWorker(path, payload) {
     throw new Error('Der Bard-Server ist nicht erreichbar. Prüfe deine Internetverbindung.');
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(data.error || `Der Bard-Server antwortet mit Status ${response.status}.`).slice(0, 600));
+  if (!response.ok) {
+    const error = new Error(friendlyRequestError(response.status));
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 async function checkWorker() {
@@ -128,6 +132,23 @@ function notice(message = '', error = false) {
   const element = $('#notice');
   element.textContent = message;
   element.classList.toggle('error', error);
+}
+function friendlyRequestError(status) {
+  if (status === 429) return 'Die Nutzung ist gerade ausgelastet. Versuch es bitte später noch einmal.';
+  if (status === 408 || status === 504) return 'Das dauert gerade länger als erwartet. Versuch es bitte gleich noch einmal.';
+  if (!status || status >= 500) return 'Uups, Bard AI ist gerade nicht erreichbar. Versuch es bitte gleich noch einmal.';
+  return 'Hm, Bard AI konnte darauf gerade nicht antworten. Versuch es bitte noch einmal.';
+}
+function friendlyFailure(error, feature = 'text') {
+  if (isProviderQuotaError(error)) return feature === 'voice'
+    ? 'Der Sprachmodus ist gerade ausgelastet. Warte kurz und versuch es später erneut.'
+    : 'Die Antwortfunktion ist gerade ausgelastet. Versuch es später noch einmal.';
+  if (!error?.status || error.status >= 500 || error.status === 408 || error.status === 504) return feature === 'voice'
+    ? 'Uups, die Sprachverbindung ist kurz gestolpert. Versuch es bitte erneut.'
+    : 'Uups, Bard AI ist gerade kurz gestolpert. Deine Nachricht steht noch hier – versuch es bitte gleich noch einmal.';
+  return feature === 'voice'
+    ? 'Der Sprachmodus konnte gerade nicht starten. Versuch es bitte noch einmal.'
+    : 'Hm, Bard AI konnte gerade nicht antworten. Deine Nachricht steht noch hier – probier es bitte noch einmal.';
 }
 function setConnection(value, label) {
   const element = $('#connectionState');
@@ -557,9 +578,8 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
     }
     setConnection('online', 'Verbunden');
   } catch (error) {
-    const message = safeText(error.message || 'Die Anfrage ist fehlgeschlagen.');
-    setConnection('offline', 'Verbindung fehlt');
-    notice(message, true);
+    setConnection('offline', 'Kurz getrennt');
+    notice(friendlyFailure(error), false);
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
     typing(false); state.busy = false;
@@ -799,9 +819,7 @@ function voiceFailure(message) {
   voice.audioContext?.close().catch(() => {}); voice.audioContext = null;
   voice.socket = null;
   const detail = message || 'Der Live-Sprachkanal konnte nicht gestartet werden.';
-  const userMessage = isProviderQuotaError({ message: detail })
-    ? 'Das Sprachkontingent ist momentan ausgeschöpft. Warte auf die Freigabe oder prüfe den Zugang in den erweiterten Einstellungen.'
-    : detail.slice(0, 360);
+  const userMessage = friendlyFailure({ message: detail }, 'voice');
   voiceState('error', 'Verbindung unterbrochen', userMessage);
   $('#voiceRetry').classList.remove('hidden');
   $('#voiceMute').classList.add('hidden');
@@ -901,7 +919,7 @@ function openLiveSocket(result, config, model = result.model) {
   });
 }
 function isProviderQuotaError(error) {
-  return /resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota|\b429\b/i.test(error?.message || '');
+  return error?.status === 429 || /resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota|\b429\b/i.test(error?.message || '');
 }
 async function startLiveVoice(keepDialog = false) {
   const voice = state.voice;
