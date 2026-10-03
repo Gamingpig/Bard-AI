@@ -567,7 +567,7 @@ async function startLiveVoice(keepDialog = false) {
     });
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
-    const socket = new WebSocket(socketUrl); voice.socket = socket;
+    const socket = new WebSocket(socketUrl); socket.binaryType = 'arraybuffer'; voice.socket = socket;
     await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
@@ -584,10 +584,22 @@ async function startLiveVoice(keepDialog = false) {
         try { socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } })); }
         catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
       };
-      socket.onmessage = event => {
+      socket.onmessage = async event => {
         let message;
-        try { message = JSON.parse(event.data); }
-        catch { finish(reject, new Error('Der Live-Kanal hat eine ungültige Antwort gesendet.')); return; }
+        try {
+          const data = event.data;
+          const text = typeof data === 'string' ? data
+            : data instanceof Blob ? await data.text()
+            : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
+            : ArrayBuffer.isView(data) ? new TextDecoder().decode(data)
+            : '';
+          if (!text) throw new TypeError('Leere oder unbekannte Nachricht');
+          message = JSON.parse(text);
+        } catch (error) {
+          const detail = error instanceof TypeError ? 'Format ' + (event.data?.constructor?.name || typeof event.data) : 'ungültiges JSON';
+          finish(reject, new Error('Live-Kanal-Nachricht konnte nicht gelesen werden (' + detail + ').'));
+          return;
+        }
         if (message.setupComplete || message.setup_complete) {
           finish(resolve);
           return;
