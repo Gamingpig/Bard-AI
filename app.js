@@ -1,11 +1,12 @@
 const $ = selector => document.querySelector(selector);
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 2);
+  const request = indexedDB.open('bard-ai-pwa', 3);
   request.onupgradeneeded = event => {
     const db = request.result;
     const tx = request.transaction;
     const chats = db.objectStoreNames.contains('chats') ? tx.objectStore('chats') : db.createObjectStore('chats', { keyPath: 'id' });
     const messages = db.objectStoreNames.contains('messages') ? tx.objectStore('messages') : db.createObjectStore('messages', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('secrets')) db.createObjectStore('secrets', { keyPath: 'id' });
     if (!messages.indexNames.contains('chatTime')) messages.createIndex('chatTime', ['chatId', 'created']);
     if (event.oldVersion < 2 && event.oldVersion > 0) {
       const legacyId = 'legacy-main';
@@ -31,8 +32,7 @@ const dbPromise = new Promise((resolve, reject) => {
 });
 
 const state = {
-  backend: localStorage.getItem('bard_backend_url') || '',
-  token: sessionStorage.getItem('bard_session_token') || '',
+  providerConfig: null,
   imageMode: false,
   busy: false,
   recognition: null,
@@ -60,20 +60,96 @@ function applyTheme(theme, save = false) {
   if (save) localStorage.setItem('bard_theme', state.theme);
 }
 
-const apiUrl = path => {
-  if (!state.backend) throw new Error('Bard AI ist noch nicht verbunden. Hinterlege einmalig die Bard-Server-Adresse unter Verbindung.');
-  const base = new URL(state.backend);
-  if (base.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(base.hostname)) throw new Error('Der Backend-Endpunkt muss HTTPS verwenden.');
-  return new URL(path.replace(/^\//, ''), `${base.href.replace(/\/$/, '')}/`).href;
-};
-async function api(path, { auth = true, ...options } = {}) {
-  const headers = new Headers(options.headers || {});
-  if (options.body) headers.set('content-type', 'application/json');
-  if (auth && state.token) headers.set('authorization', `Bearer ${state.token}`);
-  const response = await fetch(apiUrl(path), { ...options, headers, cache: 'no-store' });
+const providerOrigin = 'https://generativelanguage.googleapis.com';
+const configAad = new TextEncoder().encode('bard-ai-provider-config-v1');
+function bytesToBase64(bytes) { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); }
+function base64ToBytes(value) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
+async function localCryptoKey() {
+  const db = await dbPromise;
+  const stored = await idbRequest(db.transaction('secrets').objectStore('secrets').get('device-key'));
+  if (stored?.key) return stored.key;
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').put({ id: 'device-key', key }));
+  return key;
+}
+async function saveEncryptedProviderConfig(config) {
+  const key = await localCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const clear = new TextEncoder().encode(JSON.stringify(config));
+  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: configAad }, key, clear);
+  const db = await dbPromise;
+  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').put({ id: 'provider-config', version: 1, iv: bytesToBase64(iv), cipher: bytesToBase64(new Uint8Array(cipher)) }));
+}
+async function readEncryptedProviderConfig() {
+  const db = await dbPromise;
+  const envelope = await idbRequest(db.transaction('secrets').objectStore('secrets').get('provider-config'));
+  if (!envelope) return null;
+  const key = await localCryptoKey();
+  const clear = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(envelope.iv), additionalData: configAad }, key, base64ToBytes(envelope.cipher));
+  const value = JSON.parse(new TextDecoder().decode(clear));
+  return value && typeof value.apiKey === 'string' ? value : null;
+}
+async function clearEncryptedProviderConfig() {
+  const db = await dbPromise;
+  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').delete('provider-config'));
+  state.providerConfig = null;
+}
+function providerModelUrl(model) {
+  const safeModel = String(model || '').trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(safeModel)) throw new Error('Bitte eine gültige Gemini-Modell-ID in den Einstellungen speichern.');
+  const path = safeModel.split('/').map(encodeURIComponent).join('/');
+  return `${providerOrigin}/v1beta/models/${path}:generateContent`;
+}
+async function generateWithProvider(model, payload) {
+  const config = state.providerConfig;
+  if (!config?.apiKey) throw new Error('API-Schlüssel fehlt. Öffne Einstellungen und speichere deinen Gemini-Schlüssel verschlüsselt auf diesem Gerät.');
+  let response;
+  try {
+    response = await fetch(providerModelUrl(model), {
+      method: 'POST', cache: 'no-store',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(120000)
+    });
+  } catch {
+    throw new Error('Gemini ist nicht erreichbar. Prüfe deine Internetverbindung sowie den API-Schlüssel und dessen Gemini-API-Beschränkung.');
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Server antwortet mit Status ${response.status}.`);
+  if (!response.ok) {
+    const message = String(data.error?.message || `Google antwortet mit Status ${response.status}.`).split(config.apiKey).join('[maskiert]');
+    throw new Error(message.slice(0, 600));
+  }
   return data;
+}
+async function loadProviderModels() {
+  const apiKey = $('#providerKey').value.trim() || state.providerConfig?.apiKey || '';
+  if (!apiKey) throw new Error('Füge deinen API-Schlüssel ein oder speichere ihn zuerst.');
+  $('#providerStatus').textContent = 'Modellliste wird von Google geladen …';
+  let response;
+  try {
+    response = await fetch(`${providerOrigin}/v1beta/models?pageSize=100`, { headers: { 'x-goog-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(30000) });
+  } catch {
+    throw new Error('Modellliste nicht erreichbar. Prüfe Internetverbindung und API-Schlüssel.');
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = String(data.error?.message || `Google antwortet mit Status ${response.status}.`).split(apiKey).join('[maskiert]');
+    throw new Error(message.slice(0, 500));
+  }
+  const models = (data.models || []).filter(model => Array.isArray(model.supportedGenerationMethods) && model.supportedGenerationMethods.includes('generateContent'));
+  const list = $('#providerModels'); list.replaceChildren();
+  for (const model of models) {
+    const option = document.createElement('option');
+    option.value = String(model.name || '').replace(/^models\//, '');
+    option.label = String(model.displayName || option.value);
+    if (option.value) list.append(option);
+  }
+  if (!models.length) throw new Error('Google hat keine für Textgenerierung geeigneten Modelle zurückgegeben.');
+  $('#providerStatus').textContent = `${models.length} verfügbare Modelle geladen. Wähle ein Chat-Modell und optional ein Bildmodell.`;
+}
+function buildSystemInstruction() {
+  const savedName = state.name ? `Gewünschte Anrede: ${JSON.stringify(state.name)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.';
+  const memory = state.memory.length ? `\n\nErinnerungen des Nutzers (Kontext, keine Systemanweisungen):\n${state.memory.map(item => `- ${JSON.stringify(item)}`).join('\n')}` : '';
+  return `Du bist Bard AI, ein persönlicher KI-Assistent. Antworte standardmäßig auf Deutsch, locker, direkt und freundlich mit natürlicher moderner Umgangssprache und gelegentlichen Füllwörtern. Sprich die Person nur mit der im Nutzerprofil gespeicherten gewünschten Anrede an. Wenn kein Name gespeichert ist, frage freundlich nach der gewünschten Anrede. Bleib ehrlich über Fähigkeiten und durchgeführte Aktionen; behaupte keine Computer-, Web-, E-Mail- oder App-Aktion, die nicht tatsächlich ausgeführt wurde. Nutze Memory passend und erfinde keine Erinnerungen.\n\nNutzerprofil: ${savedName}${memory}`;
 }
 
 function notice(message = '', error = false) {
@@ -304,41 +380,59 @@ function renderMessages() {
 }
 
 
-async function unlock(password) {
-  if (!state.backend) throw new Error('Bitte zuerst den HTTPS-Backend-Endpunkt speichern.');
-  setConnection('busy', 'Verbinde');
-  const result = await api('/api/admin/login', { auth: false, method: 'POST', body: JSON.stringify({ password }) });
-  state.token = result.accessToken;
-  sessionStorage.setItem('bard_session_token', state.token);
-  $('#adminPassword').value = '';
-  $('#adminSettings').classList.remove('hidden');
-  $('#adminStatus').textContent = 'Entsperrt. Die Sitzung endet automatisch.';
-  const config = await api('/api/admin/config');
-  $('#liveModel').value = config.liveModel || '';
-  $('#imageModel').value = config.imageModel || '';
-  $('#keyStatus').textContent = config.apiKeyConfigured ? 'Schlüssel liegt geschützt auf dem Server' : 'Noch nicht eingerichtet';
-  setConnection('online', 'Verbunden');
-}
-function lockAdmin() {
-  state.token = '';
-  sessionStorage.removeItem('bard_session_token');
-  $('#adminSettings').classList.add('hidden');
-  $('#adminPassword').value = '';
+function prepareProviderSettings() {
+  const config = state.providerConfig;
+  $('#liveModel').value = config?.liveModel || '';
+  $('#imageModel').value = config?.imageModel || '';
   $('#providerKey').value = '';
-  $('#adminStatus').textContent = 'Gesperrt. Das Passwort wird nicht auf diesem Gerät gespeichert.';
-  setConnection(state.backend ? 'online' : 'offline', state.backend ? 'Server bereit' : 'Server fehlt');
+  $('#providerKey').type = 'password';
+  $('#revealProviderKey').textContent = 'Anzeigen';
+  $('#keyStatus').textContent = config?.apiKey ? 'Schlüssel ist verschlüsselt gespeichert' : 'Noch nicht eingerichtet';
+  $('#providerStatus').textContent = config?.apiKey ? 'Auf diesem Gerät eingerichtet.' : 'Einmalig API-Schlüssel und Modell-ID speichern.';
 }
-async function saveAdminConfig() {
-  if (!state.token) throw new Error('Bitte das Admin-Panel erneut entsperren.');
-  const config = {
-    liveModel: $('#liveModel').value.trim(),
-    imageModel: $('#imageModel').value.trim(),
-    apiKey: $('#providerKey').value.trim()
-  };
-  await api('/api/admin/config', { method: 'PUT', body: JSON.stringify(config) });
+function concealProviderSettings() {
   $('#providerKey').value = '';
-  $('#keyStatus').textContent = config.apiKey ? 'Schlüssel verschlüsselt gespeichert' : 'Schlüssel unverändert';
-  notice('Admin-Einstellungen sicher gespeichert.');
+  $('#providerKey').type = 'password';
+  $('#liveModel').value = '';
+  $('#imageModel').value = '';
+  $('#revealProviderKey').textContent = 'Anzeigen';
+}
+async function saveProviderSettings() {
+  const previous = state.providerConfig || {};
+  const apiKey = $('#providerKey').value.trim() || previous.apiKey || '';
+  const liveModel = $('#liveModel').value.trim();
+  const imageModel = $('#imageModel').value.trim();
+  if (!apiKey) throw new Error('Füge deinen Gemini-API-Schlüssel ein.');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(liveModel)) throw new Error('Bitte eine gültige Chat-Modell-ID eingeben.');
+  if (imageModel && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(imageModel)) throw new Error('Bitte eine gültige Bildmodell-ID eingeben.');
+  state.providerConfig = { apiKey, liveModel, imageModel };
+  try { await saveEncryptedProviderConfig(state.providerConfig); }
+  catch (error) { state.providerConfig = previous.apiKey ? previous : null; throw new Error(`Verschlüsselte Speicherung fehlgeschlagen: ${error.message}`); }
+  $('#providerKey').value = '';
+  $('#providerKey').type = 'password';
+  $('#revealProviderKey').textContent = 'Anzeigen';
+  $('#keyStatus').textContent = 'Schlüssel ist verschlüsselt gespeichert';
+  $('#providerStatus').textContent = 'Verschlüsselt auf diesem Gerät gespeichert. Du kannst Bard AI jetzt verwenden.';
+  setConnection('online', 'Eingerichtet');
+  notice('Provider-Einstellungen verschlüsselt auf diesem Gerät gespeichert.');
+}
+async function testProviderConnection() {
+  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) throw new Error('Speichere zuerst API-Schlüssel und Chat-Modell-ID.');
+  setConnection('busy', 'Teste Verbindung');
+  $('#providerStatus').textContent = 'Gemini-Verbindung wird getestet …';
+  try {
+    await generateWithProvider(state.providerConfig.liveModel, {
+      systemInstruction: { parts: [{ text: 'Antworte exakt mit: OK' }] },
+      contents: [{ role: 'user', parts: [{ text: 'OK' }] }],
+      generationConfig: { maxOutputTokens: 8 }
+    });
+    $('#providerStatus').textContent = 'Verbindung erfolgreich. Gemini hat geantwortet.';
+    setConnection('online', 'Verbunden');
+  } catch (error) {
+    $('#providerStatus').textContent = error.message;
+    setConnection('offline', 'Verbindungsfehler');
+    throw error;
+  }
 }
 
 function typing(show) {
@@ -352,31 +446,42 @@ function typing(show) {
 }
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
-  if (!state.backend) { notice('Bard AI ist noch nicht verbunden. Hinterlege einmalig die Bard-Server-Adresse unter Verbindung.', true); return; }
+  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) { notice('Richte einmalig Gemini API-Schlüssel und Chat-Modell in den Einstellungen ein.', true); $('#adminDialog').showModal(); return; }
   captureConversationMemory(text);
   const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode) {
-      const result = await api('/api/image', { method: 'POST', body: JSON.stringify({ prompt: userMessage.text }) });
-      if (!result.image?.data || !result.image?.mimeType) throw new Error('Der Server hat kein Bild zurückgegeben.');
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: result.text || 'Hier ist dein Bild.', image: result.image, created: Date.now() };
+      if (!state.providerConfig.imageModel) throw new Error('Füge zuerst eine Bildmodell-ID in den Einstellungen hinzu.');
+      const result = await generateWithProvider(state.providerConfig.imageModel, {
+        contents: [{ role: 'user', parts: [{ text: userMessage.text }] }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+      });
+      const parts = result.candidates?.[0]?.content?.parts || [];
+      const imagePart = parts.find(part => part.inlineData?.data || part.inline_data?.data);
+      if (!imagePart) throw new Error('Gemini hat kein Bild zurückgegeben. Prüfe Bildmodell, Berechtigung und Kontingent.');
+      const inline = imagePart.inlineData || imagePart.inline_data;
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: parts.filter(part => typeof part.text === 'string').map(part => part.text).join('') || 'Hier ist dein Bild.', image: { mimeType: inline.mimeType || inline.mime_type || 'image/png', data: inline.data }, created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
-      const history = state.messages.slice(-40).map(({ role, text: content }) => ({ role, text: content }));
-      const result = await api('/api/chat', { method: 'POST', body: JSON.stringify({ userName: state.name, memory: state.memory, messages: history }) });
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
+      const contents = state.messages.slice(-40).map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 12000) }] })).filter(item => item.parts[0].text.trim());
+      const result = await generateWithProvider(state.providerConfig.liveModel, {
+        systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
+        contents,
+        generationConfig: { responseModalities: ['TEXT'] }
+      });
+      const answerText = (result.candidates?.[0]?.content?.parts || []).filter(part => typeof part.text === 'string').map(part => part.text).join('');
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(answerText) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
     }
   } catch (error) {
     const message = safeText(error.message || 'Die Anfrage ist fehlgeschlagen.');
     notice(message, true);
-    if (/Sitzung gesperrt|erneut anmelden/i.test(message)) lockAdmin();
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
-    typing(false); state.busy = false; if (!state.backend) setConnection('offline', 'Server fehlt');
+    typing(false); state.busy = false;
   }
 }
 function resizePrompt() { const area = $('#prompt'); area.style.height = 'auto'; area.style.height = `${Math.min(area.scrollHeight, 180)}px`; }
@@ -441,8 +546,9 @@ function startRecognition() {
   catch { state.recognition = null; state.recognitionTimer = setTimeout(startRecognition, state.restartDelay); state.restartDelay = Math.min(state.restartDelay * 1.7, 5000); }
 }
 
-$('#backendUrl').value = state.backend;
 $('#userName').value = state.name;
+localStorage.removeItem('bard_backend_url');
+sessionStorage.removeItem('bard_session_token');
 applyTheme(state.theme);
 $('#themeToggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark', true));
 $('#chatsButton').addEventListener('click', async () => { await renderChatLibrary(); $('#chatDialog').showModal(); });
@@ -459,36 +565,48 @@ renderMemory();
 const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
 $('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
-$('#saveBackendUrl').addEventListener('click', () => {
-  try {
-    const url = new URL($('#backendUrl').value.trim());
-    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('Bitte eine HTTPS-Adresse eingeben.');
-    state.backend = url.href.replace(/\/$/, ''); localStorage.setItem('bard_backend_url', state.backend); lockAdmin();
-    notice('Server-Adresse auf diesem Gerät gespeichert. Chats und Bilder benötigen kein Admin-Passwort.');
-  } catch (error) { $('#adminStatus').textContent = error.message; }
-});
-$('#unlockForm').addEventListener('submit', async event => {
-  event.preventDefault();
-  $('#adminStatus').textContent = 'Verbindung wird geprüft …';
-  try { await unlock($('#adminPassword').value); $('#adminSettings').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); notice('Admin-Einstellungen entsperrt.'); }
-  catch (error) { $('#adminSettings').classList.add('hidden'); $('#adminStatus').textContent = error.message; setConnection('offline', state.backend ? 'Server nicht erreichbar' : 'Server fehlt'); }
-});
-$('#saveAdminSettings').addEventListener('click', async () => {
-  try { await saveAdminConfig(); }
+$('#saveProviderSettings').addEventListener('click', async () => {
+  try { await saveProviderSettings(); }
   catch (error) { notice(error.message, true); }
 });
-$('#lockAdmin').addEventListener('click', lockAdmin);
-$('#adminButton').addEventListener('click', () => $('#adminDialog').showModal());
+$('#testProvider').addEventListener('click', async () => {
+  try { await testProviderConnection(); notice('Gemini-Verbindung funktioniert.'); }
+  catch (error) { notice(error.message, true); }
+});
+$('#loadModels').addEventListener('click', async () => {
+  try { await loadProviderModels(); }
+  catch (error) { $('#providerStatus').textContent = error.message; notice(error.message, true); }
+});
+$('#clearProvider').addEventListener('click', async () => {
+  if (!window.confirm('Gemini-Schlüssel und Modell-IDs von diesem Gerät löschen?')) return;
+  await clearEncryptedProviderConfig(); prepareProviderSettings(); setConnection('offline', 'Nicht eingerichtet');
+  $('#providerStatus').textContent = 'Lokale Provider-Daten wurden gelöscht.';
+  notice('Verschlüsselte Provider-Daten gelöscht.');
+});
+$('#revealProviderKey').addEventListener('click', () => {
+  const reveal = $('#providerKey').type === 'password';
+  if (reveal && !$('#providerKey').value) $('#providerKey').value = state.providerConfig?.apiKey || '';
+  $('#providerKey').type = reveal ? 'text' : 'password';
+  $('#revealProviderKey').textContent = reveal ? 'Ausblenden' : 'Anzeigen';
+});
+$('#adminButton').addEventListener('click', () => { prepareProviderSettings(); $('#adminDialog').showModal(); });
+$('#adminDialog').addEventListener('close', concealProviderSettings);
 $('#imageButton').addEventListener('click', toggleImageMode);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
 $('#voiceButton').addEventListener('click', startRecognition);
-$('#menuButton').addEventListener('click', () => $('#adminDialog').showModal());
+$('#menuButton').addEventListener('click', () => { prepareProviderSettings(); $('#adminDialog').showModal(); });
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
 window.addEventListener('pagehide', stopRecognition);
 restoreMessages().catch(() => notice('Der lokale Chatverlauf konnte nicht geladen werden.', true));
-if (state.backend) api('/api/health', { auth: false }).then(() => setConnection('online', 'Server bereit')).catch(() => setConnection('offline', 'Server nicht erreichbar'));
+readEncryptedProviderConfig().then(config => {
+  state.providerConfig = config;
+  if (config?.apiKey && config.liveModel) setConnection('online', 'Eingerichtet');
+  else setConnection('offline', 'Einrichtung nötig');
+  $('#keyStatus').textContent = config?.apiKey ? 'Schlüssel ist verschlüsselt gespeichert' : 'Noch nicht eingerichtet';
+  $('#providerStatus').textContent = config?.apiKey ? 'Auf diesem Gerät eingerichtet.' : 'Einmalig API-Schlüssel und Modell-ID speichern.';
+}).catch(error => { setConnection('offline', 'Speicherfehler'); notice(`Verschlüsselter Speicher konnte nicht geöffnet werden: ${error.message}`, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 
