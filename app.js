@@ -84,7 +84,7 @@ async function restoreMessages() {
   });
   state.messages = rows;
   for (const item of rows) renderMessage(item, false);
-  if (rows.length) $('#welcome').classList.add('hidden');
+  if (rows.length) $('#welcome').classList.add('compact');
 }
 function addTextParts(parent, text) {
   const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
@@ -95,7 +95,7 @@ function addTextParts(parent, text) {
   }
 }
 function renderMessage(item, scroll = true) {
-  $('#welcome').classList.add('hidden');
+  if (scroll) $('#welcome').classList.add('hidden');
   const row = document.createElement('article');
   row.className = `message ${item.role === 'user' ? 'user' : 'assistant'}`;
   row.dataset.messageId = String(item.id || '');
