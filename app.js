@@ -33,7 +33,7 @@ const LIVE_VOICES = [
 ];
 const LIVE_VOICE_NAMES = new Set(LIVE_VOICES.map(voice => voice.name));
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 5);
+  const request = indexedDB.open('bard-ai-pwa', 6);
   request.onupgradeneeded = event => {
     const db = request.result;
     const tx = request.transaction;
@@ -861,44 +861,14 @@ function stopVoicePreview() {
   if (voicePreviewAudio?.source) {
     try { voicePreviewAudio.source.stop(); } catch {}
   }
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (voicePreviewAudio?.socket) {
+    try { voicePreviewAudio.socket.close(1000, 'Hörprobe angehalten'); } catch {}
+  }
   voicePreviewAudio = null;
   if (voicePreviewContext) {
     voicePreviewContext.close().catch(() => {});
     voicePreviewContext = null;
   }
-}
-function playSystemVoicePreview(name, button, run) {
-  if (!('speechSynthesis' in window)) return false;
-  voicePreviewContext?.close().catch(() => {});
-  voicePreviewContext = null;
-  const utterance = new SpeechSynthesisUtterance('Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?');
-  utterance.lang = 'de-DE';
-  const systemVoices = speechSynthesis.getVoices().filter(item => item.lang?.toLowerCase().startsWith('de'));
-  if (systemVoices.length) {
-    const index = [...name].reduce((sum, char) => sum + char.codePointAt(0), 0) % systemVoices.length;
-    utterance.voice = systemVoices[index];
-  }
-  const style = LIVE_VOICES.find(item => item.name === name)?.style || '';
-  utterance.pitch = /hell|jugendlich|lebhaft|lebendig/i.test(style) ? 1.12 : /rau|bestimmt|informativ|reif/i.test(style) ? 0.9 : 1;
-  utterance.rate = /energiegeladen|lebhaft|lebendig/i.test(style) ? 1.04 : 0.98;
-  utterance.onend = () => {
-    if (run !== voicePreviewRun || voicePreviewAudio?.utterance !== utterance) return;
-    voicePreviewAudio = null;
-    button.textContent = '▶ Anhören';
-    $('#voicePickerStatus').textContent = name + ' · System-Hörprobe beendet';
-  };
-  utterance.onerror = () => {
-    if (run !== voicePreviewRun) return;
-    voicePreviewAudio = null;
-    button.textContent = '▶ Anhören';
-    $('#voicePickerStatus').textContent = 'Die lokale Browser-Hörprobe konnte nicht abgespielt werden.';
-  };
-  voicePreviewAudio = { name, utterance };
-  speechSynthesis.speak(utterance);
-  button.textContent = '■ Stoppen';
-  $('#voicePickerStatus').textContent = name + ' · lokale System-Hörprobe (die Live-Stimme klingt anders)';
-  return true;
 }
 function voiceSampleBlob(sample) {
   const bytes = Uint8Array.from(atob(sample.data), char => char.charCodeAt(0));
@@ -915,7 +885,101 @@ function voiceSampleBlob(sample) {
   view.setUint32(40, bytes.length, true); new Uint8Array(wav, 44).set(bytes);
   return new Blob([wav], { type: 'audio/wav' });
 }
+async function requestLiveVoiceSample(name, run) {
+  const result = await requestWorker('/api/live-token', {
+    userName: state.name,
+    memory: state.memory,
+    voiceName: name,
+    context: [],
+    preview: true
+  });
+  if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine Hörprobe bereitgestellt.');
+  if (run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
+
+  const liveConfig = { ...result.config, generationConfig: {
+    ...(result.config.generationConfig || {}),
+    responseModalities: ['AUDIO'],
+    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: name } } }
+  } };
+  const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
+  const socket = new WebSocket(socketUrl);
+  socket.binaryType = 'arraybuffer';
+  voicePreviewAudio = { name, socket };
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const audioParts = [];
+    const timeout = setTimeout(() => finish(reject, new Error('Die Live-Hörprobe hat zu lange gedauert.')), 35000);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try { socket.close(1000, 'Voice preview complete'); } catch {}
+      if (run === voicePreviewRun) voicePreviewAudio = null;
+      callback(value);
+    };
+    socket.onopen = () => {
+      try { socket.send(JSON.stringify({ setup: { model: result.model, ...liveConfig } })); }
+      catch { finish(reject, new Error('Die Live-Hörprobe konnte nicht gestartet werden.')); }
+    };
+    socket.onmessage = async event => {
+      let message;
+      try {
+        const data = event.data;
+        const text = typeof data === 'string' ? data
+          : data instanceof Blob ? await data.text()
+          : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
+          : ArrayBuffer.isView(data) ? new TextDecoder().decode(data)
+          : '';
+        if (!text) throw new TypeError('Leere Live-Nachricht');
+        message = JSON.parse(text);
+      } catch {
+        finish(reject, new Error('Die Live-Hörprobe hat eine ungültige Antwort erhalten.'));
+        return;
+      }
+      if (message.error?.message) {
+        finish(reject, new Error(String(message.error.message).slice(0, 300)));
+        return;
+      }
+      if (message.setupComplete || message.setup_complete) {
+        socket.send(JSON.stringify({ clientContent: {
+          turns: [{ role: 'user', parts: [{ text: 'Sag genau und natürlich auf Deutsch: Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?' }] }],
+          turnComplete: true
+        } }));
+        return;
+      }
+      const content = message.serverContent || message.server_content;
+      for (const part of content?.modelTurn?.parts || content?.model_turn?.parts || []) {
+        const inline = part.inlineData || part.inline_data;
+        if (inline?.data) audioParts.push(decodePcm16(inline.data));
+      }
+      if (content?.turnComplete || content?.turn_complete) {
+        if (run !== voicePreviewRun) {
+          finish(reject, new Error('Hörprobe abgebrochen.'));
+          return;
+        }
+        const total = audioParts.reduce((sum, part) => sum + part.length, 0);
+        if (!total) {
+          finish(reject, new Error('Für diese Stimme kam keine Live-Audio-Hörprobe zurück.'));
+          return;
+        }
+        const samples = new Float32Array(total);
+        let offset = 0;
+        for (const part of audioParts) { samples.set(part, offset); offset += part.length; }
+        finish(resolve, { voiceName: name, mimeType: 'audio/pcm;rate=24000', data: encodePcm16(samples), source: 'live-v1' });
+      }
+    };
+    socket.onerror = () => finish(reject, new Error('Die Live-Hörprobe konnte nicht verbunden werden.'));
+    socket.onclose = event => {
+      if (settled) return;
+      finish(reject, new Error(event.reason || 'Der Live-Kanal wurde während der Hörprobe geschlossen (' + event.code + ').'));
+    };
+  });
+}
 async function playVoicePreview(name, button) {
+  if (state.voice.active) {
+    $('#voicePickerStatus').textContent = 'Beende zuerst das laufende Live-Gespräch, damit ich die gewählte Stimme separat und unverfälscht vorführen kann.';
+    return;
+  }
   if (voicePreviewAudio?.name === name) {
     stopVoicePreview();
     button.textContent = '▶ Anhören';
@@ -926,14 +990,13 @@ async function playVoicePreview(name, button) {
   const run = voicePreviewRun;
   button.disabled = true;
   button.textContent = 'Lädt …';
-  $('#voicePickerStatus').textContent = `Hörprobe für ${name} wird erstellt …`;
+  $('#voicePickerStatus').textContent = `${name} · erstelle eine Hörprobe mit derselben Live-Stimme …`;
   try {
-    // Unlock audio during the click, before waiting for the network response.
     voicePreviewContext = new AudioContext({ latencyHint: 'interactive' });
     await voicePreviewContext.resume();
     let sample = await readVoiceSample(name);
-    if (!sample) {
-      sample = await requestWorker('/api/voice-preview', { voiceName: name });
+    if (!sample || sample.source !== 'live-v1') {
+      sample = await requestLiveVoiceSample(name, run);
       await saveVoiceSample(sample);
     }
     if (run !== voicePreviewRun) return;
@@ -945,20 +1008,19 @@ async function playVoicePreview(name, button) {
     voicePreviewAudio = { name, source };
     source.onended = () => {
       if (voicePreviewAudio?.source !== source) return;
-      stopVoicePreview();
-      const current = document.querySelector(`[data-preview-voice="${name}"]`);
-      if (current) current.textContent = '▶ Anhören';
-      $('#voicePickerStatus').textContent = `${name} · Hörprobe beendet`;
+      voicePreviewAudio = null;
+      button.textContent = '▶ Anhören';
+      $('#voicePickerStatus').textContent = `${name} · Live-Hörprobe beendet und für spätere Wiedergabe gespeichert`;
+      voicePreviewContext?.close().catch(() => {});
+      voicePreviewContext = null;
     };
     source.start();
     button.textContent = '■ Stoppen';
-    $('#voicePickerStatus').textContent = `${name} · Hörprobe läuft`;
+    $('#voicePickerStatus').textContent = `${name} · originale Live-Stimme läuft`;
   } catch (error) {
     if (run === voicePreviewRun) {
-      if (!playSystemVoicePreview(name, button, run)) {
-        stopVoicePreview();
-        $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
-      }
+      stopVoicePreview();
+      $('#voicePickerStatus').textContent = error.message || 'Die Live-Hörprobe ist gerade nicht verfügbar.';
     }
   } finally {
     button.disabled = false;
