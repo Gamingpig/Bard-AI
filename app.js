@@ -569,7 +569,7 @@ async function startLiveVoice(keepDialog = false) {
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
     const socket = new WebSocket(socketUrl); voice.socket = socket;
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Der Live-Kanal antwortet zu langsam. Bitte versuche es erneut.')), 18000);
+      const timeout = setTimeout(() => reject(new Error('Der Live-Kanal antwortet zu langsam. Bitte versuche es erneut.')), 45000);
       socket.onopen = () => {
         socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } }));
       };
