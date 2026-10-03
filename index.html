@@ -17,7 +17,7 @@
     <header class="topbar">
       <button class="icon-button" id="menuButton" aria-label="Menü" title="Menü"><span class="menu-lines"></span></button>
       <a class="brand" href="./" aria-label="Bard AI Startseite"><img src="icons/bard.svg" alt=""><span>Bard AI</span></a>
-      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="icon-button" id="adminButton" aria-label="Admin öffnen" title="Admin öffnen">⚙</button></div>
+      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button><button class="icon-button" id="adminButton" aria-label="Einstellungen öffnen" title="Einstellungen öffnen">⚙</button></div>
     </header>
 
     <main>
@@ -46,10 +46,10 @@
   </div>
 
   <dialog id="adminDialog" class="admin-dialog">
-    <form method="dialog" class="dialog-head"><div><span class="eyebrow">GESCHÜTZTER BEREICH</span><h2>Admin & Verbindung</h2></div><button class="icon-button" aria-label="Schließen">×</button></form>
+    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · EINRICHTUNG</span><h2>Verbindung & Einstellungen</h2><p>Einmal verbinden, danach bleibt dein Zugang für diese Sitzung verfügbar.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
     <div class="dialog-body">
-      <section class="setup-card"><label for="backendUrl">Sicherer Backend-Endpunkt</label><div class="inline-field"><input id="backendUrl" type="url" inputmode="url" placeholder="https://…" autocomplete="url"><button id="saveBackendUrl" class="quiet-button">Speichern</button></div><p>Hier kommt die Adresse deines geschützten Bard-Servers hinein. Schlüssel und Provider-Zugangsdaten bleiben auf dem Server.</p></section>
-      <form id="unlockForm" class="setup-card"><label for="adminPassword">Admin-Passwort</label><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Passwort nur für diese Sitzung"><button class="primary-button" type="submit">Entsperren</button></div><p id="adminStatus" class="status-text">Das Passwort wird nicht auf diesem Gerät gespeichert.</p></form>
+      <section class="setup-card"><div class="setup-label"><span class="step-number">1</span><label for="backendUrl">Bard-Server</label></div><div class="inline-field"><input id="backendUrl" type="url" inputmode="url" placeholder="https://…workers.dev" autocomplete="url"><button id="saveBackendUrl" class="quiet-button">Verbinden</button></div><p>Die Serveradresse wird auf diesem Gerät gespeichert. API-Schlüssel und Anbieterdaten bleiben geschützt auf dem Server.</p></section>
+      <form id="unlockForm" class="setup-card"><div class="setup-label"><span class="step-number">2</span><label for="adminPassword">Sitzung freischalten</label></div><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Dein Admin-Passwort"><button class="primary-button" type="submit">Freischalten</button></div><p id="adminStatus" class="status-text">Das Passwort wird nur zur Anmeldung übertragen und nicht auf diesem Gerät gespeichert.</p></form>
       <section id="adminSettings" class="admin-settings hidden">
         <div class="admin-heading"><div><span class="eyebrow">PROVIDER & MODEL</span><h3>Technische Einstellungen</h3><small id="providerName">Provider: serverseitig geschützt</small></div><button id="lockAdmin" class="quiet-button">Sperren</button></div>
         <p class="security-note">Änderungen werden verschlüsselt auf dem Backend gespeichert. API-Schlüssel werden nie an diese App zurückgegeben.</p>

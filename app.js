@@ -18,8 +18,21 @@ const state = {
   restartDelay: 350,
   installPrompt: null,
   name: localStorage.getItem('bard_user_name') || '',
+  theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: []
 };
+
+function applyTheme(theme, save = false) {
+  state.theme = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = state.theme;
+  const light = state.theme === 'light';
+  const toggle = $('#themeToggle');
+  toggle.setAttribute('aria-label', `Zum ${light ? 'dunklen' : 'hellen'} Design wechseln`);
+  toggle.title = `Zum ${light ? 'dunklen' : 'hellen'} Design wechseln`;
+  toggle.firstElementChild.textContent = light ? '☾' : '☼';
+  $('meta[name="theme-color"]').content = light ? '#f4f7fc' : '#080b14';
+  if (save) localStorage.setItem('bard_theme', state.theme);
+}
 
 const apiUrl = path => {
   if (!state.backend) throw new Error('Öffne das Admin-Fenster und trage zuerst die sichere Backend-Adresse ein.');
@@ -246,6 +259,11 @@ function startRecognition() {
 
 $('#backendUrl').value = state.backend;
 $('#userName').value = state.name;
+applyTheme(state.theme);
+$('#themeToggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark', true));
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', event => {
+  if (!localStorage.getItem('bard_theme')) applyTheme(event.matches ? 'light' : 'dark');
+});
 if (state.name) $('#nameForm').classList.add('hidden');
 $('#nameForm').addEventListener('submit', event => { event.preventDefault(); const value = $('#userName').value.trim(); if (value) { saveUserName(value); notice('Name auf diesem Gerät gespeichert.'); } });
 $('#saveBackendUrl').addEventListener('click', () => {
