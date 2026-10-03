@@ -1,11 +1,45 @@
 const $ = selector => document.querySelector(selector);
+const LIVE_VOICES = [
+  { name: 'Zephyr', style: 'Hell' },
+  { name: 'Puck', style: 'Lebhaft' },
+  { name: 'Charon', style: 'Informativ' },
+  { name: 'Kore', style: 'Bestimmt' },
+  { name: 'Fenrir', style: 'Energiegeladen' },
+  { name: 'Leda', style: 'Jugendlich' },
+  { name: 'Orus', style: 'Bestimmt' },
+  { name: 'Aoede', style: 'Locker' },
+  { name: 'Callirrhoe', style: 'Entspannt' },
+  { name: 'Autonoe', style: 'Hell' },
+  { name: 'Enceladus', style: 'Sanft' },
+  { name: 'Iapetus', style: 'Klar' },
+  { name: 'Umbriel', style: 'Entspannt' },
+  { name: 'Algieba', style: 'Sanft' },
+  { name: 'Despina', style: 'Sanft' },
+  { name: 'Erinome', style: 'Klar' },
+  { name: 'Algenib', style: 'Rau' },
+  { name: 'Rasalgethi', style: 'Informativ' },
+  { name: 'Laomedeia', style: 'Lebhaft' },
+  { name: 'Achernar', style: 'Weich' },
+  { name: 'Alnilam', style: 'Bestimmt' },
+  { name: 'Schedar', style: 'Ausgeglichen' },
+  { name: 'Gacrux', style: 'Reif' },
+  { name: 'Pulcherrima', style: 'Ausdrucksstark' },
+  { name: 'Achird', style: 'Freundlich' },
+  { name: 'Zubenelgenubi', style: 'Locker' },
+  { name: 'Vindemiatrix', style: 'Sanft' },
+  { name: 'Sadachbia', style: 'Lebendig' },
+  { name: 'Sadaltager', style: 'Wissend' },
+  { name: 'Sulafat', style: 'Warm' }
+];
+const LIVE_VOICE_NAMES = new Set(LIVE_VOICES.map(voice => voice.name));
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 4);
+  const request = indexedDB.open('bard-ai-pwa', 5);
   request.onupgradeneeded = event => {
     const db = request.result;
     const tx = request.transaction;
     const chats = db.objectStoreNames.contains('chats') ? tx.objectStore('chats') : db.createObjectStore('chats', { keyPath: 'id' });
     const messages = db.objectStoreNames.contains('messages') ? tx.objectStore('messages') : db.createObjectStore('messages', { keyPath: 'id' });
+    if (!db.objectStoreNames.contains('voiceSamples')) db.createObjectStore('voiceSamples', { keyPath: 'voiceName' });
     if (db.objectStoreNames.contains('secrets')) db.deleteObjectStore('secrets');
     if (!messages.indexNames.contains('chatTime')) messages.createIndex('chatTime', ['chatId', 'created']);
     if (event.oldVersion < 2 && event.oldVersion > 0) {
@@ -34,7 +68,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: ['Zephyr','Puck','Charon','Kore','Fenrir','Leda','Orus','Aoede','Callirrhoe','Autonoe','Enceladus','Iapetus','Umbriel','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Alnilam','Schedar','Gacrux','Pulcherrima','Achird','Zubenelgenubi','Vindemiatrix','Sadachbia','Sadaltager','Sulafat'].includes(localStorage.getItem('bard_live_voice')) ? localStorage.getItem('bard_live_voice') : '' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: LIVE_VOICE_NAMES.has(localStorage.getItem('bard_live_voice')) ? localStorage.getItem('bard_live_voice') : '' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -133,6 +167,18 @@ function persistMessages() {
   }));
 }
 function idbRequest(request) { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
+function readVoiceSample(name) {
+  return dbPromise.then(db => idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').get(name)));
+}
+function saveVoiceSample(sample) {
+  return dbPromise.then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction('voiceSamples', 'readwrite');
+    tx.objectStore('voiceSamples').put(sample);
+    tx.oncomplete = resolve;
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Hörprobe konnte nicht gespeichert werden.'));
+  }));
+}
+
 async function readChatMessages(db, chatId) {
   const range = IDBKeyRange.bound([chatId, 0], [chatId, Number.MAX_SAFE_INTEGER]);
   const rows = await idbRequest(db.transaction('messages').objectStore('messages').index('chatTime').getAll(range));
@@ -695,16 +741,108 @@ $('#voiceButton').addEventListener('click', () => void startLiveVoice());
 $('#voiceClose').addEventListener('click', () => stopLiveVoice());
 $('#voiceEnd').addEventListener('click', () => { voiceTone(440); stopLiveVoice(); });
 $('#voiceMute').addEventListener('click', toggleVoiceMute);
-$('#voiceSelect').value = state.voice.voiceName;
-$('#voiceSelect').addEventListener('change', event => {
-  const name = event.currentTarget.value;
-  state.voice.voiceName = name;
-  if (name) localStorage.setItem('bard_live_voice', name);
-  else localStorage.removeItem('bard_live_voice');
-  $('#voiceVoiceNote').textContent = state.voice.active
-    ? 'Gespeichert — gilt ab dem nächsten Live-Gespräch.'
-    : 'Gespeichert — gilt ab dem nächsten Live-Gespräch.';
+function updateVoicePickerTrigger() {
+  $('#voiceSelectedLabel').textContent = LIVE_VOICES.find(voice => voice.name === state.voice.voiceName)?.name || 'Standard';
+}
+let voicePreviewRun = 0;
+let voicePreviewAudio = null;
+function stopVoicePreview() {
+  voicePreviewRun += 1;
+  if (voicePreviewAudio) {
+    voicePreviewAudio.audio.pause();
+    voicePreviewAudio.audio.currentTime = 0;
+    URL.revokeObjectURL(voicePreviewAudio.url);
+    voicePreviewAudio = null;
+  }
+}
+function voiceSampleBlob(sample) {
+  const bytes = Uint8Array.from(atob(sample.data), char => char.charCodeAt(0));
+  const mimeType = sample.mimeType || 'audio/wav';
+  if (/wav/i.test(mimeType)) return new Blob([bytes], { type: mimeType });
+  const rate = Number(mimeType.match(/rate=(\d+)/i)?.[1]) || 24000;
+  const wav = new ArrayBuffer(44 + bytes.length);
+  const view = new DataView(wav);
+  const writeText = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+  writeText(0, 'RIFF'); view.setUint32(4, 36 + bytes.length, true); writeText(8, 'WAVE');
+  writeText(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeText(36, 'data');
+  view.setUint32(40, bytes.length, true); new Uint8Array(wav, 44).set(bytes);
+  return new Blob([wav], { type: 'audio/wav' });
+}
+async function playVoicePreview(name, button) {
+  if (voicePreviewAudio?.name === name) {
+    stopVoicePreview();
+    button.textContent = '▶ Anhören';
+    $('#voicePickerStatus').textContent = 'Hörprobe angehalten.';
+    return;
+  }
+  stopVoicePreview();
+  const run = voicePreviewRun;
+  button.disabled = true;
+  button.textContent = 'Lädt …';
+  $('#voicePickerStatus').textContent = `Hörprobe für ${name} wird erstellt …`;
+  try {
+    let sample = await readVoiceSample(name);
+    if (!sample) {
+      sample = await requestWorker('/api/voice-preview', { voiceName: name });
+      await saveVoiceSample(sample);
+    }
+    if (run !== voicePreviewRun) return;
+    const url = URL.createObjectURL(voiceSampleBlob(sample));
+    const audio = new Audio(url);
+    voicePreviewAudio = { name, audio, url };
+    audio.onended = () => {
+      if (voicePreviewAudio?.audio !== audio) return;
+      stopVoicePreview();
+      const current = document.querySelector(`[data-preview-voice="${name}"]`);
+      if (current) current.textContent = '▶ Anhören';
+      $('#voicePickerStatus').textContent = `${name} · Hörprobe beendet`;
+    };
+    await audio.play();
+    button.textContent = '■ Stoppen';
+    $('#voicePickerStatus').textContent = `${name} · Hörprobe läuft`;
+  } catch (error) {
+    if (run === voicePreviewRun) $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
+  } finally {
+    if (run === voicePreviewRun) button.disabled = false;
+    if (run === voicePreviewRun && voicePreviewAudio?.name !== name) button.textContent = '▶ Anhören';
+  }
+}
+function renderVoicePicker() {
+  const list = $('#voicePickerList');
+  list.replaceChildren();
+  for (const voice of LIVE_VOICES) {
+    const card = document.createElement('article');
+    const selected = state.voice.voiceName === voice.name;
+    card.className = `voice-choice-card${selected ? ' selected' : ''}`;
+    const label = document.createElement('div');
+    const name = document.createElement('strong'); name.className = 'voice-choice-name'; name.textContent = voice.name;
+    const style = document.createElement('span'); style.className = 'voice-choice-style'; style.textContent = voice.style;
+    label.append(name, style);
+    const actions = document.createElement('div'); actions.className = 'voice-choice-actions';
+    const preview = document.createElement('button'); preview.type = 'button'; preview.dataset.previewVoice = voice.name; preview.textContent = '▶ Anhören';
+    preview.addEventListener('click', () => void playVoicePreview(voice.name, preview));
+    const use = document.createElement('button'); use.type = 'button'; use.className = 'voice-choice-use'; use.setAttribute('aria-pressed', String(selected)); use.textContent = selected ? 'Ausgewählt' : 'Verwenden';
+    use.addEventListener('click', () => {
+      state.voice.voiceName = voice.name;
+      localStorage.setItem('bard_live_voice', voice.name);
+      updateVoicePickerTrigger();
+      renderVoicePicker();
+      $('#voicePickerStatus').textContent = `${voice.name} wird ab dem nächsten Live-Gespräch verwendet.`;
+    });
+    actions.append(preview, use); card.append(label, actions); list.append(card);
+  }
+}
+updateVoicePickerTrigger();
+$('#voicePickerOpen').addEventListener('click', () => {
+  renderVoicePicker();
+  $('#voicePickerStatus').textContent = '';
+  $('#voicePickerDialog').showModal();
 });
+$('#voicePickerClose').addEventListener('click', () => $('#voicePickerDialog').close());
+$('#voicePickerDialog').addEventListener('close', stopVoicePreview);
+$('#voicePickerDialog').addEventListener('click', event => { if (event.target === $('#voicePickerDialog')) $('#voicePickerDialog').close(); });
 $('#voiceRetry').addEventListener('click', () => { stopLiveVoice(false); void startLiveVoice(true); });
 $('#voiceDialog').addEventListener('cancel', event => { event.preventDefault(); stopLiveVoice(); });
 $('#voiceDialog').addEventListener('close', () => { if (state.voice.active) stopLiveVoice(false); });
