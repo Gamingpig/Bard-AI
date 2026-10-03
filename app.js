@@ -18,6 +18,7 @@ const state = {
   restartDelay: 350,
   installPrompt: null,
   name: localStorage.getItem('bard_user_name') || '',
+  memory: (() => { try { const value = JSON.parse(localStorage.getItem('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: []
 };
@@ -35,7 +36,7 @@ function applyTheme(theme, save = false) {
 }
 
 const apiUrl = path => {
-  if (!state.backend) throw new Error('Öffne das Admin-Fenster und trage zuerst die sichere Backend-Adresse ein.');
+  if (!state.backend) throw new Error('Bard AI ist noch nicht verbunden. Hinterlege einmalig die Bard-Server-Adresse unter Verbindung.');
   const base = new URL(state.backend);
   if (base.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(base.hostname)) throw new Error('Der Backend-Endpunkt muss HTTPS verwenden.');
   return new URL(path.replace(/^\//, ''), `${base.href.replace(/\/$/, '')}/`).href;
@@ -119,7 +120,43 @@ function saveUserName(value) {
   localStorage.setItem('bard_user_name', state.name);
   $('#userName').value = state.name;
   $('#nameForm').classList.add('hidden');
+  renderMessages();
 }
+function renderMemory() {
+  const list = $('#memoryList');
+  if (!list) return;
+  list.replaceChildren();
+  $('#memoryCount').textContent = state.memory.length ? `${state.memory.length} gespeichert` : 'Noch leer';
+  $('#memoryEmpty').classList.toggle('hidden', state.memory.length > 0);
+  for (const [index, fact] of state.memory.entries()) {
+    const item = document.createElement('li');
+    const text = document.createElement('span'); text.textContent = fact;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'memory-remove'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Erinnerung entfernen');
+    remove.addEventListener('click', () => { state.memory.splice(index, 1); localStorage.setItem('bard_memory', JSON.stringify(state.memory)); renderMemory(); });
+    item.append(text, remove); list.append(item);
+  }
+}
+function remember(value) {
+  const fact = value.replace(/[\s.!?]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (!fact || state.memory.some(item => item.toLocaleLowerCase('de') === fact.toLocaleLowerCase('de'))) return false;
+  state.memory = [...state.memory, fact].slice(-12);
+  localStorage.setItem('bard_memory', JSON.stringify(state.memory)); renderMemory();
+  return true;
+}
+function captureConversationMemory(text) {
+  const normalized = text.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  const name = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bnenn mich|\bdu kannst mich nennen)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
+  if (name?.[1]) saveUserName(name[1]);
+  const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte)[\s,:-]+(?:dass\s+)?(.+)/iu);
+  if (explicit?.[1]) return remember(explicit[1]);
+  const preference = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich lerne gerade)\s+(.+)/iu);
+  return preference ? remember(`${preference[1]} ${preference[2]}`) : false;
+}
+function renderMessages() {
+  const rows = $('#messages'); rows.replaceChildren();
+  for (const item of state.messages) renderMessage(item, false);
+}
+
 
 async function unlock(password) {
   if (!state.backend) throw new Error('Bitte zuerst den HTTPS-Backend-Endpunkt speichern.');
@@ -143,7 +180,7 @@ function lockAdmin() {
   $('#adminPassword').value = '';
   $('#providerKey').value = '';
   $('#adminStatus').textContent = 'Gesperrt. Das Passwort wird nicht auf diesem Gerät gespeichert.';
-  setConnection('offline', 'Gesperrt');
+  setConnection(state.backend ? 'online' : 'offline', state.backend ? 'Server bereit' : 'Server fehlt');
 }
 async function saveAdminConfig() {
   if (!state.token) throw new Error('Bitte das Admin-Panel erneut entsperren.');
@@ -169,7 +206,8 @@ function typing(show) {
 }
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
-  if (!state.token) { $('#adminDialog').showModal(); notice('Entsperre die Sitzung im Admin-Fenster, um Bard zu verwenden.', true); return; }
+  if (!state.backend) { notice('Bard AI ist noch nicht verbunden. Hinterlege einmalig die Bard-Server-Adresse unter Verbindung.', true); return; }
+  captureConversationMemory(text);
   const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
@@ -181,7 +219,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
       const history = state.messages.slice(-40).map(({ role, text: content }) => ({ role, text: content }));
-      const result = await api('/api/chat', { method: 'POST', body: JSON.stringify({ userName: state.name, messages: history }) });
+      const result = await api('/api/chat', { method: 'POST', body: JSON.stringify({ userName: state.name, memory: state.memory, messages: history }) });
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
@@ -189,10 +227,10 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
   } catch (error) {
     const message = safeText(error.message || 'Die Anfrage ist fehlgeschlagen.');
     notice(message, true);
-    if (/401|403|session|token/i.test(message)) lockAdmin();
+    if (/Sitzung gesperrt|erneut anmelden/i.test(message)) lockAdmin();
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
-    typing(false); state.busy = false; setConnection(state.token ? 'online' : 'offline', state.token ? 'Verbunden' : 'Gesperrt');
+    typing(false); state.busy = false; if (!state.backend) setConnection('offline', 'Server fehlt');
   }
 }
 function resizePrompt() { const area = $('#prompt'); area.style.height = 'auto'; area.style.height = `${Math.min(area.scrollHeight, 180)}px`; }
@@ -265,19 +303,25 @@ matchMedia('(prefers-color-scheme: light)').addEventListener('change', event => 
   if (!localStorage.getItem('bard_theme')) applyTheme(event.matches ? 'light' : 'dark');
 });
 if (state.name) $('#nameForm').classList.add('hidden');
-$('#nameForm').addEventListener('submit', event => { event.preventDefault(); const value = $('#userName').value.trim(); if (value) { saveUserName(value); notice('Name auf diesem Gerät gespeichert.'); } });
+$('#nameForm').addEventListener('submit', event => { event.preventDefault(); const value = $('#userName').value.trim(); if (value) { saveUserName(value); notice('Name auf diesem Gerät gespeichert und wird bei jeder Anfrage mitgesendet.'); } });
+$('#memoryForm').addEventListener('submit', event => { event.preventDefault(); const input = $('#memoryInput'); if (remember(input.value)) { input.value = ''; notice('Im Memory auf diesem Gerät gespeichert.'); } });
+renderMemory();
+const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
+const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+$('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
 $('#saveBackendUrl').addEventListener('click', () => {
   try {
     const url = new URL($('#backendUrl').value.trim());
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('Bitte eine HTTPS-Adresse eingeben.');
     state.backend = url.href.replace(/\/$/, ''); localStorage.setItem('bard_backend_url', state.backend); lockAdmin();
-    notice('Backend-Adresse lokal gespeichert. Entsperre anschließend den Admin-Bereich.');
+    notice('Server-Adresse auf diesem Gerät gespeichert. Chats und Bilder benötigen kein Admin-Passwort.');
   } catch (error) { $('#adminStatus').textContent = error.message; }
 });
 $('#unlockForm').addEventListener('submit', async event => {
   event.preventDefault();
-  try { await unlock($('#adminPassword').value); }
-  catch (error) { lockAdmin(); $('#adminStatus').textContent = error.message; }
+  $('#adminStatus').textContent = 'Verbindung wird geprüft …';
+  try { await unlock($('#adminPassword').value); $('#adminSettings').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); notice('Admin-Einstellungen entsperrt.'); }
+  catch (error) { $('#adminSettings').classList.add('hidden'); $('#adminStatus').textContent = error.message; setConnection('offline', state.backend ? 'Server nicht erreichbar' : 'Server fehlt'); }
 });
 $('#saveAdminSettings').addEventListener('click', async () => {
   try { await saveAdminConfig(); }
@@ -297,3 +341,4 @@ window.addEventListener('pagehide', stopRecognition);
 restoreMessages().catch(() => notice('Der lokale Chatverlauf konnte nicht geladen werden.', true));
 if (state.backend) api('/api/health', { auth: false }).then(() => setConnection('online', 'Server bereit')).catch(() => setConnection('offline', 'Server nicht erreichbar'));
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
