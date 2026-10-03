@@ -142,7 +142,7 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .tool-button, .send-button { width: 42px; height: 42px; flex: 0 0 42px; border: 0; border-radius: 15px; background: transparent; color: var(--muted-strong); font-size: 25px; }
 .tool-button:hover { background: var(--surface-raised); color: var(--cyan); }
 .tool-button.selected { background: color-mix(in srgb, var(--cyan) 14%, var(--surface)); color: var(--cyan); }
-.send-button { background: linear-gradient(135deg, #65e5eb, #8daaff); color: #08111f; font-size: 27px; font-weight: 700; }
+.send-button { display: inline-flex; width: auto; min-width: 100px; height: 42px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; padding: 0 15px; border: 1px solid #ffffff24; border-radius: 999px; background: linear-gradient(110deg, #39c8e9, #4caee8); color: #fff; box-shadow: 0 5px 16px #38bfe54a; font-size: 12px; font-weight: 700; transition: transform .16s ease, box-shadow .16s ease, filter .16s ease; } .send-button svg { width: 17px; height: 17px; fill: currentColor; } .send-button:hover { transform: translateY(-1px); box-shadow: 0 7px 20px #38bfe570; filter: saturate(1.08); } .send-button:active { transform: translateY(0) scale(.97); } .send-button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .composer-tools { display: flex; min-height: 38px; align-items: center; gap: 12px; padding: 5px 8px; color: var(--muted); font-size: 10px; }
 .voice-button { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); color: var(--muted-strong); font-size: 11px; }
 .voice-button.listening { border-color: #38c69b; background: color-mix(in srgb, #38c69b 12%, var(--surface)); color: #158b69; }
@@ -220,4 +220,5 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; animation-duration: .01ms; animation-iteration-count: 1; }
 }
+
 
