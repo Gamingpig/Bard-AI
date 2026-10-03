@@ -279,6 +279,48 @@ async function deleteChat(chatId) {
   await renderChatLibrary();
 }
 
+function previewMarkup(text) {
+  const match = String(text || '').match(/```(html|svg)\s*([\s\S]*?)```/i);
+  if (!match) return null;
+  const source = match[2].trim();
+  if (!source || source.length > 100_000) return null;
+  const html = match[1].toLowerCase() === 'svg'
+    ? `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020">${source}</body></html>`
+    : source;
+  return { source, html, block: match[0] };
+}
+function renderCodePreview(parent, preview) {
+  const card = document.createElement('section');
+  card.className = 'generated-preview';
+  const heading = document.createElement('div');
+  heading.className = 'generated-preview-heading';
+  const title = document.createElement('strong');
+  title.textContent = 'Live-Vorschau';
+  const badge = document.createElement('span');
+  badge.textContent = 'HTML · CSS · JS';
+  heading.append(title, badge);
+  const frame = document.createElement('iframe');
+  frame.className = 'generated-preview-frame';
+  frame.title = 'Von Bard AI erstellte Code-Vorschau';
+  frame.setAttribute('sandbox', 'allow-scripts');
+  frame.referrerPolicy = 'no-referrer';
+  frame.loading = 'lazy';
+  frame.addEventListener('load', () => {
+    frame.contentWindow?.postMessage({ type: 'bard-preview', html: preview.html }, '*');
+  }, { once: true });
+  frame.src = new URL('./preview.html', document.baseURI).href;
+  const details = document.createElement('details');
+  details.className = 'generated-preview-source';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Quellcode anzeigen';
+  const code = document.createElement('pre');
+  const codeText = document.createElement('code');
+  codeText.textContent = preview.source;
+  code.append(codeText);
+  details.append(summary, code);
+  card.append(heading, frame, details);
+  parent.append(card);
+}
 function addTextParts(parent, text) {
   const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
   for (const content of paragraphs) {
@@ -297,7 +339,9 @@ function renderMessage(item, scroll = true) {
   if (item.role === 'user') avatar.textContent = state.name ? state.name.slice(0, 1).toUpperCase() : '•';
   else { const icon = document.createElement('img'); icon.src = 'icons/bard.svg'; icon.alt = ''; avatar.append(icon); }
   const bubble = document.createElement('div'); bubble.className = 'bubble';
-  addTextParts(bubble, item.text);
+  const preview = item.role === 'assistant' ? previewMarkup(item.text) : null;
+  addTextParts(bubble, preview ? String(item.text).replace(preview.block, '').trim() : item.text);
+  if (preview) renderCodePreview(bubble, preview);
   if (item.image) {
     const image = document.createElement('img');
     image.className = 'generated'; image.alt = item.image.alt || 'Von Bard AI generiertes Bild';
@@ -370,6 +414,10 @@ function typing(show) {
     row.append(avatar, bubble); $('#messages').append(row);
   } else if (!show) row?.remove();
 }
+function requestsCodePreview(text) {
+  const value = String(text || '').toLocaleLowerCase('de');
+  return /\b(html|css|javascript|js|svg|canvas)\b|webseite|website|landing[- ]?page|prototyp|grafik|diagramm|visualisierung|animation|vorschau|dashboard/.test(value);
+}
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
   captureConversationMemory(text);
@@ -391,7 +439,11 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       const messages = state.messages.slice(-40)
         .map(message => ({ role: message.role === 'assistant' ? 'assistant' : 'user', text: String(message.text || '').slice(0, 12000) }))
         .filter(message => message.text.trim());
-      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory });
+      const codePreview = !state.imageMode && requestsCodePreview(userMessage.text);
+      if (codePreview && messages.length) {
+        messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
+      }
+      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, codePreview });
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
