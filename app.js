@@ -117,8 +117,10 @@ function renderMessage(item, scroll = true) {
 }
 function saveUserName(value) {
   state.name = value.trim().replace(/\s+/g, ' ').slice(0, 60);
-  localStorage.setItem('bard_user_name', state.name);
+  if (state.name) localStorage.setItem('bard_user_name', state.name);
+  else localStorage.removeItem('bard_user_name');
   $('#userName').value = state.name;
+  renderMemory();
   $('#nameForm').classList.add('hidden');
   renderMessages();
 }
@@ -126,8 +128,16 @@ function renderMemory() {
   const list = $('#memoryList');
   if (!list) return;
   list.replaceChildren();
-  $('#memoryCount').textContent = state.memory.length ? `${state.memory.length} gespeichert` : 'Noch leer';
-  $('#memoryEmpty').classList.toggle('hidden', state.memory.length > 0);
+  const total = state.memory.length + (state.name ? 1 : 0);
+  $('#memoryCount').textContent = total ? `${total} gespeichert` : 'Noch leer';
+  $('#memoryEmpty').classList.toggle('hidden', total > 0);
+  if (state.name) {
+    const profile = document.createElement('li');
+    const label = document.createElement('span'); label.textContent = `Gewünschte Anrede: ${state.name}`;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'memory-remove'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Gespeicherten Namen entfernen');
+    remove.addEventListener('click', () => { state.name = ''; localStorage.removeItem('bard_user_name'); $('#userName').value = ''; $('#nameForm').classList.remove('hidden'); renderMemory(); renderMessages(); });
+    profile.append(label, remove); list.append(profile);
+  }
   for (const [index, fact] of state.memory.entries()) {
     const item = document.createElement('li');
     const text = document.createElement('span'); text.textContent = fact;
