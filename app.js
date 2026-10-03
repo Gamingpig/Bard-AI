@@ -61,6 +61,7 @@ function applyTheme(theme, save = false) {
 }
 
 const providerOrigin = 'https://generativelanguage.googleapis.com';
+const extensionOrigin = 'chrome-extension://flijbfnkajehjamfcjhogclokaeblaag';
 const configAad = new TextEncoder().encode('bard-ai-provider-config-v1');
 function bytesToBase64(bytes) { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); }
 function base64ToBytes(value) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
@@ -95,7 +96,7 @@ async function clearEncryptedProviderConfig() {
   state.providerConfig = null;
 }
 function providerModelUrl(model) {
-  const safeModel = String(model || '').trim();
+  const safeModel = String(model || '').trim().replace(/^models\//, '');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(safeModel)) throw new Error('Bitte eine gültige Gemini-Modell-ID in den Einstellungen speichern.');
   const path = safeModel.split('/').map(encodeURIComponent).join('/');
   return `${providerOrigin}/v1beta/models/${path}:generateContent`;
@@ -120,8 +121,8 @@ async function generateWithProvider(model, payload) {
   }
   return data;
 }
-async function loadProviderModels() {
-  const apiKey = $('#providerKey').value.trim() || state.providerConfig?.apiKey || '';
+async function loadProviderModels(apiKeyOverride = '') {
+  const apiKey = apiKeyOverride || $('#providerKey').value.trim() || state.providerConfig?.apiKey || '';
   if (!apiKey) throw new Error('Füge deinen API-Schlüssel ein oder speichere ihn zuerst.');
   $('#providerStatus').textContent = 'Modellliste wird von Google geladen …';
   let response;
@@ -144,7 +145,12 @@ async function loadProviderModels() {
     if (option.value) list.append(option);
   }
   if (!models.length) throw new Error('Google hat keine für Textgenerierung geeigneten Modelle zurückgegeben.');
+  const textModel = models.find(model => !/image|imagen|audio|live|embedding/i.test(model.name || '')) || models[0];
+  const imageModel = models.find(model => /image|imagen/i.test(model.name || ''));
+  if (!$('#liveModel').value) $('#liveModel').value = String(textModel.name || '').replace(/^models\//, '');
+  if (!$('#imageModel').value && imageModel) $('#imageModel').value = String(imageModel.name || '').replace(/^models\//, '');
   $('#providerStatus').textContent = `${models.length} verfügbare Modelle geladen. Wähle ein Chat-Modell und optional ein Bildmodell.`;
+  return models;
 }
 function buildSystemInstruction() {
   const savedName = state.name ? `Gewünschte Anrede: ${JSON.stringify(state.name)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.';
@@ -591,6 +597,39 @@ $('#revealProviderKey').addEventListener('click', () => {
 });
 $('#adminButton').addEventListener('click', () => { prepareProviderSettings(); $('#adminDialog').showModal(); });
 $('#adminDialog').addEventListener('close', concealProviderSettings);
+window.addEventListener('message', async event => {
+  if (event.origin !== extensionOrigin || event.data?.type !== 'bard-ai-import-provider' || typeof event.data.apiKey !== 'string') return;
+  const apiKey = event.data.apiKey.trim();
+  if (!apiKey || apiKey.length > 512) return;
+  if (!window.confirm('Die vorhandene Gemini-Verbindung aus Bard AI Side Panel verschlüsselt auf diesem Gerät in Bard AI PWA speichern?')) {
+    event.source?.postMessage({ type: 'bard-ai-import-result', ok: false }, event.origin);
+    return;
+  }
+  try {
+    prepareProviderSettings();
+    let models = [];
+    try { models = await loadProviderModels(apiKey); } catch {}
+    const config = {
+      apiKey,
+      liveModel: $('#liveModel').value.trim(),
+      imageModel: $('#imageModel').value.trim()
+    };
+    state.providerConfig = config;
+    await saveEncryptedProviderConfig(config);
+    $('#keyStatus').textContent = 'Schlüssel ist verschlüsselt gespeichert';
+    const modelNote = models.length ? 'Modelle wurden geladen und passende Standardmodelle ausgewählt.' : 'Schlüssel gespeichert; Modellliste konnte nicht geladen werden. Öffne Einstellungen und lade die Modelle erneut.';
+    $('#providerStatus').textContent = modelNote;
+    setConnection(config.liveModel ? 'online' : 'offline', config.liveModel ? 'Eingerichtet' : 'Modell fehlt');
+    notice('Provider-Schlüssel aus der Extension wurde lokal verschlüsselt übernommen.');
+    event.source?.postMessage({ type: 'bard-ai-import-result', ok: true }, event.origin);
+  } catch (error) {
+    $('#providerStatus').textContent = `Import fehlgeschlagen: ${error.message}`;
+    event.source?.postMessage({ type: 'bard-ai-import-result', ok: false }, event.origin);
+  } finally {
+    concealProviderSettings();
+  }
+});
+if (window.opener) window.opener.postMessage({ type: 'bard-ai-pwa-ready' }, extensionOrigin);
 $('#imageButton').addEventListener('click', toggleImageMode);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
