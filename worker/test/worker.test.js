@@ -41,7 +41,7 @@ test('rejects foreign origins and protects configuration before login', async ()
   assert.equal(locked.status, 401);
 });
 
-test('stores credentials encrypted, returns no key, and proxies chat/image only with a valid session', async () => {
+test('stores credentials encrypted, returns no key, and allows limited chat/image without admin login', async () => {
   const env = environment();
   const originalFetch = globalThis.fetch;
   const providerCalls = [];
@@ -72,21 +72,24 @@ test('stores credentials encrypted, returns no key, and proxies chat/image only 
     assert.equal('apiKey' in configData, false);
 
     const chat = await worker.fetch(request('/api/chat', {
-      method: 'POST', token: accessToken,
-      body: { userName: 'Alex', messages: [{ role: 'user', text: 'Sag Hallo.' }] }
+      method: 'POST',
+      body: { userName: 'Alex', memory: ['mag Weltraum'], messages: [{ role: 'user', text: 'Sag Hallo.' }] }
     }), env);
     assert.equal(chat.status, 200);
     assert.equal((await chat.json()).text, 'Hallo Alex!');
     assert.match(providerCalls[0].url, /private\/live-model:generateContent$/);
     assert.equal(providerCalls[0].headers['x-goog-api-key'], apiKey);
     assert.match(providerCalls[0].body.systemInstruction.parts[0].text, /Gewünschte Anrede: "Alex"/);
+    assert.match(providerCalls[0].body.systemInstruction.parts[0].text, /mag Weltraum/);
+    assert.equal([...env.SETTINGS.values.keys()].some(key => key.startsWith('guest:') && key.includes(':chat:')), true);
 
-    const image = await worker.fetch(request('/api/image', { method: 'POST', token: accessToken, body: { prompt: 'Ein blauer Stern' } }), env);
+    const image = await worker.fetch(request('/api/image', { method: 'POST', body: { prompt: 'Ein blauer Stern' } }), env);
     assert.equal(image.status, 200);
     assert.equal((await image.json()).image.data, 'cG5n');
-    const anonymous = await worker.fetch(request('/api/chat', { method: 'POST', body: { messages: [{ text: 'hi' }] } }), env);
-    assert.equal(anonymous.status, 401);
+    const lockedConfig = await worker.fetch(request('/api/admin/config'), env);
+    assert.equal(lockedConfig.status, 401);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
+
