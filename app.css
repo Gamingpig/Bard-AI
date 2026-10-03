@@ -77,6 +77,11 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .model-alias { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; padding: 7px 11px; border: 1px solid color-mix(in srgb, var(--cyan) 22%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--cyan) 7%, var(--surface)); color: var(--cyan); font-size: 11px; }
 .welcome h1 { margin: 15px 0 10px; font-size: clamp(32px, 7vw, 48px); font-weight: 650; letter-spacing: -.055em; line-height: 1.08; }
 .welcome-copy { color: var(--muted); font-size: 14px; }
+.welcome.compact { width: 100%; max-width: 680px; margin: 0 auto; padding: 12px 8px 2px; text-align: left; }
+.welcome.compact .orb-wrap, .welcome.compact .eyebrow, .welcome.compact .model-alias, .welcome.compact .name-form { display: none; }
+.welcome.compact h1 { margin: 0; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; }
+.welcome.compact h1 br { display: none; }
+.welcome.compact .welcome-copy { margin: 3px 0 0; font-size: 11px; }
 .name-form { max-width: 350px; margin: 30px auto 0; padding: 14px 15px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); text-align: left; box-shadow: var(--shadow); }
 .name-form label, .setup-card label, .admin-settings label { display: block; margin-bottom: 8px; color: var(--muted-strong); font-size: 12px; font-weight: 650; }
 .name-form > div, .inline-field { display: flex; gap: 8px; }
