@@ -119,8 +119,12 @@ async function providerRequest(env, config, model, payload) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = String(data.error?.message || `Der Provider antwortet mit Status ${response.status}.`).split(config.apiKey).join('[maskiert]');
-    throw new HttpError(response.status === 429 ? 429 : response.status >= 500 ? 502 : response.status, message.slice(0, 600));
+    const message = response.status === 429
+      ? 'Die Nutzung ist gerade ausgelastet. Bitte später erneut versuchen.'
+      : response.status >= 500
+        ? 'Der Dienst ist vorübergehend nicht erreichbar.'
+        : 'Die Anfrage konnte gerade nicht verarbeitet werden.';
+    throw new HttpError(response.status === 429 ? 429 : response.status >= 500 ? 502 : response.status, message);
   }
   return data;
 }
