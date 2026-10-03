@@ -712,11 +712,11 @@ async function handleLiveToolCall(toolCall) {
     const name = String(call.name || ''); const args = call.args || {};
     if (name === 'show_web_preview') {
       const html = typeof args.html === 'string' ? args.html : ''; const title = String(args.title || 'Neue Visualisierung').slice(0, 100);
-      const preview = html.length <= 12_000 ? previewMarkup('```html\n' + html + '\n```') : null;
+      const preview = html.length <= 10_000 ? previewMarkup('```html\n' + html + '\n```') : null;
       if (preview) {
         state.voice.pendingPreview = { title, html }; showLiveCodePreview(title, preview);
         functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wurde in der sicheren Live-Ansicht angezeigt.' } });
-      } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 12.000 Zeichen. Erzeuge eine kleinere vollständige Vorschau.' } });
+      } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen. Erzeuge eine kleinere vollständige Vorschau.' } });
     } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
   }
   if (functionResponses.length && state.voice.socket?.readyState === WebSocket.OPEN) state.voice.socket.send(JSON.stringify({ toolResponse: { functionResponses } }));
@@ -806,6 +806,7 @@ async function saveVoiceTurn() {
   const voice = state.voice;
   const userText = safeText(voice.turnUser).trim();
   const assistantText = safeText(voice.turnAssistant).trim();
+  const hadPreview = Boolean(voice.pendingPreview);
   voice.turnUser = ''; voice.turnAssistant = '';
   voice.transcriptUserEntry = null; voice.transcriptAssistantEntry = null;
   if (userText) captureConversationMemory(userText);
@@ -816,11 +817,11 @@ async function saveVoiceTurn() {
   }
   if (assistantText || voice.pendingPreview) {
     const codeBlock = voice.pendingPreview ? '\n\n```html\n' + voice.pendingPreview.html + '\n```' : '';
-    const message = { id: crypto.randomUUID(), role: 'assistant', text: safeText(assistantText + codeBlock), created: created + 1 };
+    const message = { id: crypto.randomUUID(), role: 'assistant', text: safeText(assistantText.slice(0, 1500) + codeBlock), created: created + 1 };
     voice.pendingPreview = null;
     state.messages.push(message); renderMessage(message);
   }
-  if (userText || assistantText) {
+  if (userText || assistantText || hadPreview) {
     $('#welcome').classList.add('compact');
     await persistMessages();
   }
