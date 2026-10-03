@@ -324,6 +324,7 @@ function renderCodePreview(parent, preview) {
 function addTextParts(parent, text) {
   const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
   for (const content of paragraphs) {
+    if (!content.trim()) continue;
     const p = document.createElement('p');
     p.textContent = content;
     parent.append(p);
