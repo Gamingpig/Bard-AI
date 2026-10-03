@@ -1,5 +1,7 @@
 # Bard AI API worker
 
+> Legacy deployment guide: the current GitHub Pages PWA connects directly to Google Gemini and does not use this Worker. Do not configure a Worker endpoint for the current app. Provider settings are encrypted and kept in the PWA's local browser storage.
+
 This Cloudflare Worker keeps provider credentials and the admin password out of the public GitHub Pages app. The Pages frontend is static and cannot safely hold secrets.
 
 ## Create and configure the Worker
