@@ -34,7 +34,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: ['Zephyr','Puck','Charon','Kore','Fenrir','Leda','Orus','Aoede','Callirrhoe','Autonoe','Enceladus','Iapetus','Umbriel','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Alnilam','Schedar','Gacrux','Pulcherrima','Achird','Zubenelgenubi','Vindemiatrix','Sadachbia','Sadaltager','Sulafat'].includes(localStorage.getItem('bard_live_voice')) ? localStorage.getItem('bard_live_voice') : '' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -563,9 +563,24 @@ async function startLiveVoice(keepDialog = false) {
     const result = await requestWorker('/api/live-token', {
       userName: state.name,
       memory: state.memory,
+      voiceName: voice.voiceName,
       context: state.messages.slice(-12).map(item => ({ role: item.role, text: String(item.text || '').slice(0, 1000) }))
     });
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
+    const liveConfig = { ...result.config };
+    if (voice.voiceName) {
+      const generationConfig = liveConfig.generationConfig || {};
+      liveConfig.generationConfig = {
+        ...generationConfig,
+        speechConfig: {
+          ...(generationConfig.speechConfig || {}),
+          voiceConfig: {
+            ...(generationConfig.speechConfig?.voiceConfig || {}),
+            prebuiltVoiceConfig: { voiceName: voice.voiceName }
+          }
+        }
+      };
+    }
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
     const socket = new WebSocket(socketUrl); socket.binaryType = 'arraybuffer'; voice.socket = socket;
     await new Promise((resolve, reject) => {
@@ -581,7 +596,7 @@ async function startLiveVoice(keepDialog = false) {
         try { socket.close(4000, 'Setup timeout'); } catch {}
       }, 45000);
       socket.onopen = () => {
-        try { socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } })); }
+        try { socket.send(JSON.stringify({ setup: { model: result.model, ...liveConfig } })); }
         catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
       };
       socket.onmessage = async event => {
@@ -680,6 +695,16 @@ $('#voiceButton').addEventListener('click', () => void startLiveVoice());
 $('#voiceClose').addEventListener('click', () => stopLiveVoice());
 $('#voiceEnd').addEventListener('click', () => { voiceTone(440); stopLiveVoice(); });
 $('#voiceMute').addEventListener('click', toggleVoiceMute);
+$('#voiceSelect').value = state.voice.voiceName;
+$('#voiceSelect').addEventListener('change', event => {
+  const name = event.currentTarget.value;
+  state.voice.voiceName = name;
+  if (name) localStorage.setItem('bard_live_voice', name);
+  else localStorage.removeItem('bard_live_voice');
+  $('#voiceVoiceNote').textContent = state.voice.active
+    ? 'Gespeichert — gilt ab dem nächsten Live-Gespräch.'
+    : 'Gespeichert — gilt ab dem nächsten Live-Gespräch.';
+});
 $('#voiceRetry').addEventListener('click', () => { stopLiveVoice(false); void startLiveVoice(true); });
 $('#voiceDialog').addEventListener('cancel', event => { event.preventDefault(); stopLiveVoice(); });
 $('#voiceDialog').addEventListener('close', () => { if (state.voice.active) stopLiveVoice(false); });
