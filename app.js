@@ -167,6 +167,7 @@ function persistMessages() {
       for (const message of rows) {
         const row = { ...message, chatId: state.chatId, created: Number(message.created) || Date.now() };
         if (row.image && !keepImages.has(row.id)) delete row.image;
+        delete row.searchSuggestion;
         store.put(row);
       }
       const chats = tx.objectStore('chats');
@@ -378,6 +379,14 @@ function renderCodePreview(parent, preview) {
   card.append(heading, frame, details);
   parent.append(card);
 }
+function renderSearchSuggestion(parent, markup, live = false) {
+  if (typeof markup !== 'string' || !markup.trim() || markup.length > 24_000) return;
+  const frame = document.createElement('iframe'); frame.className = 'search-suggestion-frame';
+  frame.title = 'Google-Suchvorschläge zu dieser Antwort'; frame.setAttribute('sandbox', 'allow-scripts');
+  frame.referrerPolicy = 'no-referrer'; frame.loading = 'lazy'; frame.srcdoc = markup;
+  if (live) frame.classList.add('live');
+  parent.append(frame);
+}
 function renderSources(parent, sources) {
   const safeSources = (Array.isArray(sources) ? sources : []).filter(source => {
     try { return source?.title && new URL(source.url).protocol === 'https:'; } catch { return false; }
@@ -416,6 +425,7 @@ function renderMessage(item, scroll = true) {
   addTextParts(bubble, preview ? String(item.text).replace(preview.block, '').trim() : item.text);
   if (preview) renderCodePreview(bubble, preview);
   if (item.sources) renderSources(bubble, item.sources);
+  if (item.searchSuggestion) renderSearchSuggestion(bubble, item.searchSuggestion);
   if (item.image) {
     const image = document.createElement('img');
     image.className = 'generated'; image.alt = item.image.alt || 'Von Bard AI generiertes Bild';
@@ -540,7 +550,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
         messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
       }
       const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, context: buildPreviousContext(), codePreview });
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], created: Date.now() };
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
     }
@@ -719,6 +729,9 @@ function handleVoiceMessage(message) {
   if (!content) return;
   const input = content.inputTranscription?.text || content.input_transcription?.text;
   const output = content.outputTranscription?.text || content.output_transcription?.text;
+  const grounding = content.groundingMetadata || content.grounding_metadata || message.groundingMetadata || message.grounding_metadata;
+  const suggestion = grounding?.searchEntryPoint?.renderedContent || grounding?.search_entry_point?.rendered_content;
+  if (suggestion) renderSearchSuggestion($('#voiceTranscript'), suggestion, true);
   if (input) {
     appendCaption('user', input);
     if (!state.name && assistantAskedForName()) {
