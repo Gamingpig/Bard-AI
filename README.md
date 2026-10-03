@@ -1,6 +1,6 @@
 # Bard AI
 
-Bard AI is a mobile-ready installable PWA with its entry page and linked assets in the repository root. It includes a light/dark theme, local conversation history, a remembered user name and editable local memory, voice input/output, image requests, and password-protected provider settings. Chat and image requests do not require the admin password.
+Bard AI is a mobile-ready installable PWA with its entry page and linked assets in the repository root. It includes a light/dark theme, multiple independent local conversations, a remembered user name and editable local memory, voice input/output, image requests, and password-protected provider settings. Chat and image requests do not require the admin password. Each conversation keeps its own message context and can be reopened from the chat list; name and memory are shared across conversations.
 
 ## Publish
 
