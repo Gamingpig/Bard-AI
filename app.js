@@ -559,13 +559,53 @@ function playVoiceAudio(base64) {
   };
   source.start(start);
 }
-function appendCaption(element, text) {
-  const clean = safeText(text).slice(0, 2400);
-  if (!clean) return;
-  const previous = element.dataset.caption || '';
-  const next = (previous + clean).slice(-2400);
-  element.dataset.caption = next;
-  element.textContent = next;
+function joinTranscriptText(previous, chunk) {
+  const next = safeText(chunk).replace(/\s+/g, ' ').trim();
+  if (!next) return previous;
+  if (!previous) return next;
+  if (next === previous || previous.endsWith(next)) return previous;
+  if (next.startsWith(previous)) return next.slice(-2400);
+  const needsSpace = /[\p{L}\p{N})\]}.!?…,:;’”»]$/u.test(previous) && /^[\p{L}\p{N}([{“‘]/u.test(next);
+  return (previous + (needsSpace ? ' ' : '') + next).slice(-2400);
+}
+function resetVoiceTranscript() {
+  const transcript = $('#voiceTranscript');
+  transcript.replaceChildren();
+  const empty = document.createElement('p');
+  empty.id = 'voiceTranscriptEmpty'; empty.className = 'voice-transcript-empty';
+  empty.textContent = 'Dein Gespräch erscheint hier, sobald ihr sprecht.';
+  transcript.append(empty);
+  state.voice.transcriptUserEntry = null;
+  state.voice.transcriptAssistantEntry = null;
+}
+function appendCaption(role, text) {
+  const voice = state.voice;
+  const user = role === 'user';
+  const bufferKey = user ? 'turnUser' : 'turnAssistant';
+  const entryKey = user ? 'transcriptUserEntry' : 'transcriptAssistantEntry';
+  const next = joinTranscriptText(voice[bufferKey] || '', text);
+  if (!next || next === voice[bufferKey]) return;
+  voice[bufferKey] = next;
+  const transcript = $('#voiceTranscript');
+  $('#voiceTranscriptEmpty')?.remove();
+  let entry = voice[entryKey];
+  if (!entry) {
+    entry = document.createElement('article');
+    entry.className = 'voice-transcript-entry ' + (user ? 'user' : 'assistant');
+    const speaker = document.createElement('span');
+    speaker.className = 'voice-transcript-speaker';
+    speaker.textContent = user ? 'DU' : 'BARD AI';
+    const content = document.createElement('p');
+    content.className = 'voice-transcript-text';
+    entry.append(speaker, content);
+    transcript.append(entry);
+    voice[entryKey] = entry;
+  }
+  entry.querySelector('.voice-transcript-text').textContent = next;
+  while (transcript.querySelectorAll('.voice-transcript-entry').length > 36) {
+    transcript.querySelector('.voice-transcript-entry')?.remove();
+  }
+  transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
 }
 function handleVoiceMessage(message) {
   const voice = state.voice;
@@ -574,8 +614,8 @@ function handleVoiceMessage(message) {
   if (!content) return;
   const input = content.inputTranscription?.text || content.input_transcription?.text;
   const output = content.outputTranscription?.text || content.output_transcription?.text;
-  if (input) { appendCaption($('#voiceUserCaption'), input); voice.turnUser = (voice.turnUser + input).slice(-2400); }
-  if (output) { appendCaption($('#voiceAssistantCaption'), output); voice.turnAssistant = (voice.turnAssistant + output).slice(-2400); }
+  if (input) appendCaption('user', input);
+  if (output) appendCaption('assistant', output);
   if (content.interrupted) {
     stopVoicePlayback(); voice.pendingTurnComplete = false;
     voiceState('listening', 'Ich höre zu', 'Sag einfach weiter — ich bin bei dir.');
@@ -642,6 +682,7 @@ function saveVoiceTurn() {
   const userText = safeText(voice.turnUser).trim();
   const assistantText = safeText(voice.turnAssistant).trim();
   voice.turnUser = ''; voice.turnAssistant = '';
+  voice.transcriptUserEntry = null; voice.transcriptAssistantEntry = null;
   if (userText) captureConversationMemory(userText);
   const created = Date.now();
   if (userText) {
@@ -667,8 +708,7 @@ async function startLiveVoice(keepDialog = false) {
   $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Live-Gespräch läuft';
   $('#voiceMute').setAttribute('aria-pressed', 'false');
   $('#voiceMute').lastElementChild.textContent = 'Mikro stumm';
-  $('#voiceUserCaption').textContent = ''; $('#voiceUserCaption').dataset.caption = '';
-  $('#voiceAssistantCaption').textContent = ''; $('#voiceAssistantCaption').dataset.caption = '';
+  resetVoiceTranscript();
   setConnection('busy', 'Bard AI Live');
   voiceState('connecting', 'Live-Verbindung wird aufgebaut', 'Verbinde sicher mit Bard AI Live.');
   try {
