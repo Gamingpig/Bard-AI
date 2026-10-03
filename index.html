@@ -26,14 +26,20 @@
           <div class="orb-wrap"><div class="orb-glow"></div><div class="orb"><span class="orb-core"></span><img src="icons/bard.svg" alt="Bard AI"></div><i class="orbit orbit-a"></i><i class="orbit orbit-b"></i></div>
           <p class="eyebrow">DEIN AI ASSISTANT</p>
           <span class="model-alias">◈ Bard 5.0 Ultra Beta</span>
-          <h1>Was hast du<br>auf dem Herzen?</h1>
-          <p class="welcome-copy">Chatte, sprich oder lass dir ein Bild gestalten.</p>
+          <h1 id="welcomeHeadline">Was hast du<br>auf dem Herzen?</h1>
+          <p class="welcome-copy" id="welcomeCopy">Erzähl mir, woran du gerade denkst.</p>
           <form id="nameForm" class="name-form"><label for="userName">Wie darf ich dich nennen?</label><div><input id="userName" maxlength="60" autocomplete="given-name" placeholder="Dein Name"><button class="quiet-button" type="submit">Merken</button></div></form>
         </div>
         <div id="messages" class="messages" role="log" aria-live="polite" aria-label="Chatverlauf"></div>
       </section>
 
       <footer class="composer-wrap">
+        <details class="memory-panel">
+          <summary><span>Dein Memory</span><span id="memoryCount">Noch leer</span></summary>
+          <p id="memoryEmpty">Gespeicherte Namen und wichtige Vorlieben erscheinen hier nur auf diesem Gerät.</p>
+          <ul id="memoryList" aria-live="polite"></ul>
+          <form id="memoryForm"><input id="memoryInput" maxlength="180" placeholder="Erinnerung hinzufügen …" aria-label="Erinnerung hinzufügen"><button class="quiet-button" type="submit">Speichern</button></form>
+        </details>
         <div class="composer">
           <button id="imageButton" class="tool-button" aria-label="Bild erstellen" title="Bild erstellen">＋</button>
           <textarea id="prompt" rows="1" maxlength="12000" placeholder="Frag Bard AI …" aria-label="Nachricht"></textarea>
@@ -46,10 +52,10 @@
   </div>
 
   <dialog id="adminDialog" class="admin-dialog">
-    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · EINRICHTUNG</span><h2>Verbindung & Einstellungen</h2><p>Einmal verbinden, danach bleibt dein Zugang für diese Sitzung verfügbar.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
+    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · EINRICHTUNG</span><h2>Verbindung & Einstellungen</h2><p>Diese Adresse brauchst du einmalig. Chats und Bilder funktionieren anschließend ohne Admin-Passwort.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
     <div class="dialog-body">
       <section class="setup-card"><div class="setup-label"><span class="step-number">1</span><label for="backendUrl">Bard-Server</label></div><div class="inline-field"><input id="backendUrl" type="url" inputmode="url" placeholder="https://…workers.dev" autocomplete="url"><button id="saveBackendUrl" class="quiet-button">Verbinden</button></div><p>Die Serveradresse wird auf diesem Gerät gespeichert. API-Schlüssel und Anbieterdaten bleiben geschützt auf dem Server.</p></section>
-      <form id="unlockForm" class="setup-card"><div class="setup-label"><span class="step-number">2</span><label for="adminPassword">Sitzung freischalten</label></div><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Dein Admin-Passwort"><button class="primary-button" type="submit">Freischalten</button></div><p id="adminStatus" class="status-text">Das Passwort wird nur zur Anmeldung übertragen und nicht auf diesem Gerät gespeichert.</p></form>
+      <form id="unlockForm" class="setup-card"><div class="setup-label"><span class="step-number">2</span><label for="adminPassword">Nur Admin-Einstellungen freischalten</label></div><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Dein Admin-Passwort"><button class="primary-button" type="submit">Freischalten</button></div><p id="adminStatus" class="status-text">Das Passwort wird nur für Modell- und Provider-Einstellungen benötigt. Chatten und Bilder erstellen geht ohne Passwort.</p></form>
       <section id="adminSettings" class="admin-settings hidden">
         <div class="admin-heading"><div><span class="eyebrow">PROVIDER & MODEL</span><h3>Technische Einstellungen</h3><small id="providerName">Provider: serverseitig geschützt</small></div><button id="lockAdmin" class="quiet-button">Sperren</button></div>
         <p class="security-note">Änderungen werden verschlüsselt auf dem Backend gespeichert. API-Schlüssel werden nie an diese App zurückgegeben.</p>
@@ -63,3 +69,4 @@
   <script src="app.js" type="module"></script>
 </body>
 </html>
+
