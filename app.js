@@ -70,7 +70,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -378,6 +378,21 @@ function renderCodePreview(parent, preview) {
   card.append(heading, frame, details);
   parent.append(card);
 }
+function renderSources(parent, sources) {
+  const safeSources = (Array.isArray(sources) ? sources : []).filter(source => {
+    try { return source?.title && new URL(source.url).protocol === 'https:'; } catch { return false; }
+  }).slice(0, 8);
+  if (!safeSources.length) return;
+  const section = document.createElement('details'); section.className = 'message-sources';
+  const summary = document.createElement('summary'); summary.textContent = `Webquellen (${safeSources.length})`;
+  const list = document.createElement('ul');
+  for (const source of safeSources) {
+    const item = document.createElement('li'); const link = document.createElement('a');
+    link.href = source.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = String(source.title).slice(0, 180);
+    item.append(link); list.append(item);
+  }
+  section.append(summary, list); parent.append(section);
+}
 function addTextParts(parent, text) {
   const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
   for (const content of paragraphs) {
@@ -400,6 +415,7 @@ function renderMessage(item, scroll = true) {
   const preview = item.role === 'assistant' ? previewMarkup(item.text) : null;
   addTextParts(bubble, preview ? String(item.text).replace(preview.block, '').trim() : item.text);
   if (preview) renderCodePreview(bubble, preview);
+  if (item.sources) renderSources(bubble, item.sources);
   if (item.image) {
     const image = document.createElement('img');
     image.className = 'generated'; image.alt = item.image.alt || 'Von Bard AI generiertes Bild';
@@ -524,7 +540,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
         messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
       }
       const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, context: buildPreviousContext(), codePreview });
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
     }
@@ -670,10 +686,36 @@ function appendCaption(role, text) {
   }
   transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
 }
+function showLiveCodePreview(title, preview) {
+  const transcript = $('#voiceTranscript'); $('#voiceTranscriptEmpty')?.remove();
+  const entry = document.createElement('article'); entry.className = 'voice-transcript-entry assistant voice-preview-entry';
+  const speaker = document.createElement('span'); speaker.className = 'voice-transcript-speaker'; speaker.textContent = 'BARD AI';
+  const label = document.createElement('p'); label.className = 'voice-transcript-text'; label.textContent = `Vorschau · ${String(title || 'Neue Visualisierung').slice(0, 100)}`;
+  entry.append(speaker, label); renderCodePreview(entry, preview); transcript.append(entry);
+  while (transcript.querySelectorAll('.voice-transcript-entry').length > 36) transcript.querySelector('.voice-transcript-entry')?.remove();
+  transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
+}
+async function handleLiveToolCall(toolCall) {
+  const calls = toolCall?.functionCalls || toolCall?.function_calls || []; const functionResponses = [];
+  for (const call of calls) {
+    const name = String(call.name || ''); const args = call.args || {};
+    if (name === 'show_web_preview') {
+      const html = typeof args.html === 'string' ? args.html : ''; const title = String(args.title || 'Neue Visualisierung').slice(0, 100);
+      const preview = html.length <= 12_000 ? previewMarkup('```html\n' + html + '\n```') : null;
+      if (preview) {
+        state.voice.pendingPreview = { title, html }; showLiveCodePreview(title, preview);
+        functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wurde in der sicheren Live-Ansicht angezeigt.' } });
+      } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 12.000 Zeichen. Erzeuge eine kleinere vollständige Vorschau.' } });
+    } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
+  }
+  if (functionResponses.length && state.voice.socket?.readyState === WebSocket.OPEN) state.voice.socket.send(JSON.stringify({ toolResponse: { functionResponses } }));
+}
 function handleVoiceMessage(message) {
   const voice = state.voice;
   if (message.error?.message) { voiceFailure(String(message.error.message).slice(0, 300)); return; }
-  const content = message.serverContent;
+  const toolCall = message.toolCall || message.tool_call;
+  if (toolCall) void handleLiveToolCall(toolCall).catch(() => voiceFailure('Die Live-Vorschau konnte nicht angezeigt werden.'));
+  const content = message.serverContent || message.server_content;
   if (!content) return;
   const input = content.inputTranscription?.text || content.input_transcription?.text;
   const output = content.outputTranscription?.text || content.output_transcription?.text;
@@ -756,11 +798,13 @@ async function saveVoiceTurn() {
   const created = Date.now();
   if (userText) {
     const message = { id: crypto.randomUUID(), role: 'user', text: userText, created };
-    state.messages.push(message); renderMessage(message, false);
+    state.messages.push(message); renderMessage(message);
   }
-  if (assistantText) {
-    const message = { id: crypto.randomUUID(), role: 'assistant', text: assistantText, created: created + 1 };
-    state.messages.push(message); renderMessage(message, false);
+  if (assistantText || voice.pendingPreview) {
+    const codeBlock = voice.pendingPreview ? '\n\n```html\n' + voice.pendingPreview.html + '\n```' : '';
+    const message = { id: crypto.randomUUID(), role: 'assistant', text: safeText(assistantText + codeBlock), created: created + 1 };
+    voice.pendingPreview = null;
+    state.messages.push(message); renderMessage(message);
   }
   if (userText || assistantText) {
     $('#welcome').classList.add('compact');
@@ -771,7 +815,7 @@ async function startLiveVoice(keepDialog = false) {
   const voice = state.voice;
   if (voice.active) return;
   if (!keepDialog && !$('#voiceDialog').open) $('#voiceDialog').showModal();
-  voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false; voice.turnUser = ''; voice.turnAssistant = '';
+  voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false; voice.turnUser = ''; voice.turnAssistant = ''; voice.pendingPreview = null;
   voice.sources = new Set(); voice.nextPlayTime = 0;
   $('#voiceRetry').classList.add('hidden'); $('#voiceMute').classList.remove('hidden');
   $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Live-Gespräch läuft';
