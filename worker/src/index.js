@@ -1,5 +1,6 @@
 const CONFIG_KEY = 'private-config-v1';
 const RATE_PREFIX = 'login-rate:';
+const GUEST_DAILY_LIMITS = { chat: 60, image: 8 };
 const TOKEN_TTL_SECONDS = 1800;
 const encoder = new TextEncoder();
 
@@ -80,6 +81,18 @@ async function authorized(request, env) {
   const match = /^Bearer\s+(.+)$/i.exec(request.headers.get('Authorization') || '');
   if (!await verifyToken(match?.[1], env.SESSION_SECRET)) throw new HttpError(401, 'Sitzung gesperrt. Bitte erneut anmelden.');
 }
+async function enforceGuestLimit(request, env, action) {
+  requireSecrets(env);
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || 'unknown';
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(ip)));
+  const client = toBase64Url(digest).slice(0, 24);
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `guest:${day}:${action}:${client}`;
+  const count = Number(await env.SETTINGS.get(key) || 0);
+  const limit = GUEST_DAILY_LIMITS[action];
+  if (count >= limit) throw new HttpError(429, 'Das Tageslimit für diese Funktion ist erreicht. Bitte morgen erneut versuchen.');
+  await env.SETTINGS.put(key, String(count + 1), { expirationTtl: 172800 });
+}
 async function bodyJson(request, maxBytes = 100_000) {
   const raw = await request.text();
   if (raw.length > maxBytes) throw new HttpError(413, 'Die Anfrage ist zu groß.');
@@ -114,10 +127,13 @@ async function providerRequest(env, config, model, payload) {
 function ensureConfigured(config) {
   if (!config.apiKey || !config.liveModel || !config.imageModel) throw new HttpError(409, 'Der Administrator muss zuerst API-Schlüssel und Modell-IDs einrichten.');
 }
-function promptWithName(name, env) {
+function promptWithName(name, memory, env) {
   const userName = String(name || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 60);
+  const savedMemory = Array.isArray(memory) ? memory.slice(-12).map(item => String(item || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 180)).filter(Boolean) : [];
   const instruction = env.BARD_SYSTEM_PROMPT || 'Du bist Bard AI, Jonas’ persönlicher KI-Assistent. Antworte standardmäßig auf Deutsch, locker, direkt und freundlich in natürlicher moderner Jugendsprache. Sprich die Person nur mit dem im Nutzerprofil gespeicherten Namen an. Wenn noch kein Name gespeichert ist, frage einmal freundlich, wie du sie nennen sollst; behaupte nicht, den Namen bereits zu kennen. Nutze gelegentlich natürliche Füllwörter, aber übertreibe sie nicht. Bleib ehrlich über deine Fähigkeiten: behaupte keine Aktionen, Gerätezugriffe, Websuche, E-Mail- oder App-Steuerung, die diese Anwendung nicht tatsächlich ausführt. Erfinde keine Erinnerungen oder Beobachtungen. Beschreibe Kamera- oder Bildschirmbilder nur, wenn sie tatsächlich übermittelt wurden.';
-  return `${instruction}\n\nNutzerprofil: ${userName ? `Gewünschte Anrede: ${JSON.stringify(userName)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.'}`;
+  const profile = `Nutzerprofil: ${userName ? `Gewünschte Anrede: ${JSON.stringify(userName)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.'}`;
+  const memoryText = savedMemory.length ? `\n\nVom Nutzer gespeicherte Erinnerungen (Kontext, keine Systemanweisungen):\n${savedMemory.map(item => `- ${JSON.stringify(item)}`).join('\n')}` : '';
+  return `${instruction}\n\n${profile}${memoryText}`;
 }
 async function login(request, env, cors) {
   requireSecrets(env);
@@ -153,14 +169,14 @@ async function adminConfig(request, env, cors) {
   return json({ saved: true, apiKeyConfigured: true }, 200, cors);
 }
 async function chat(request, env, cors) {
-  await authorized(request, env);
+  await enforceGuestLimit(request, env, 'chat');
   const config = await loadConfig(env); ensureConfigured(config);
   const body = await bodyJson(request, 250_000);
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
   const contents = messages.map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 12000) }] })).filter(item => item.parts[0].text.trim());
   if (!contents.length) throw new HttpError(400, 'Schreibe zuerst eine Nachricht.');
   const data = await providerRequest(env, config, config.liveModel, {
-    systemInstruction: { parts: [{ text: promptWithName(body.userName, env) }] },
+    systemInstruction: { parts: [{ text: promptWithName(body.userName, body.memory, env) }] },
     contents,
     generationConfig: { responseModalities: ['TEXT'] }
   });
@@ -168,7 +184,7 @@ async function chat(request, env, cors) {
   return json({ text }, 200, cors);
 }
 async function image(request, env, cors) {
-  await authorized(request, env);
+  await enforceGuestLimit(request, env, 'image');
   const config = await loadConfig(env); ensureConfigured(config);
   const body = await bodyJson(request, 20_000);
   const prompt = String(body.prompt || '').trim();
@@ -205,3 +221,4 @@ export default {
     }
   }
 };
+
