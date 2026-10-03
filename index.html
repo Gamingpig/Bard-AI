@@ -68,6 +68,43 @@
         <div class="voice-captions" aria-live="polite"><p id="voiceUserCaption"></p><p id="voiceAssistantCaption"></p></div>
       </div>
       <footer class="voice-controls">
+        <div class="voice-voice-picker">
+          <label for="voiceSelect">Bard-Stimme</label>
+          <select id="voiceSelect" aria-describedby="voiceVoiceNote">
+          <option value="">Standardstimme</option>
+          <option value="Zephyr">Zephyr · Hell</option>
+          <option value="Puck">Puck · Lebhaft</option>
+          <option value="Charon">Charon · Informativ</option>
+          <option value="Kore">Kore · Bestimmt</option>
+          <option value="Fenrir">Fenrir · Energiegeladen</option>
+          <option value="Leda">Leda · Jugendlich</option>
+          <option value="Orus">Orus · Bestimmt</option>
+          <option value="Aoede">Aoede · Locker</option>
+          <option value="Callirrhoe">Callirrhoe · Entspannt</option>
+          <option value="Autonoe">Autonoe · Hell</option>
+          <option value="Enceladus">Enceladus · Sanft</option>
+          <option value="Iapetus">Iapetus · Klar</option>
+          <option value="Umbriel">Umbriel · Entspannt</option>
+          <option value="Algieba">Algieba · Sanft</option>
+          <option value="Despina">Despina · Sanft</option>
+          <option value="Erinome">Erinome · Klar</option>
+          <option value="Algenib">Algenib · Rau</option>
+          <option value="Rasalgethi">Rasalgethi · Informativ</option>
+          <option value="Laomedeia">Laomedeia · Lebhaft</option>
+          <option value="Achernar">Achernar · Weich</option>
+          <option value="Alnilam">Alnilam · Bestimmt</option>
+          <option value="Schedar">Schedar · Ausgeglichen</option>
+          <option value="Gacrux">Gacrux · Reif</option>
+          <option value="Pulcherrima">Pulcherrima · Ausdrucksstark</option>
+          <option value="Achird">Achird · Freundlich</option>
+          <option value="Zubenelgenubi">Zubenelgenubi · Locker</option>
+          <option value="Vindemiatrix">Vindemiatrix · Sanft</option>
+          <option value="Sadachbia">Sadachbia · Lebendig</option>
+          <option value="Sadaltager">Sadaltager · Wissend</option>
+          <option value="Sulafat">Sulafat · Warm</option>
+          </select>
+          <small id="voiceVoiceNote">Wird beim nächsten Live-Gespräch verwendet.</small>
+        </div>
         <button id="voiceMute" class="voice-control" aria-pressed="false"><span class="control-glyph">⌁</span><span>Mikro stumm</span></button>
         <button id="voiceRetry" class="voice-control voice-retry hidden"><span class="control-glyph">↻</span><span>Nochmal verbinden</span></button>
         <button id="voiceEnd" class="voice-end"><span>■</span> Gespräch beenden</button>
