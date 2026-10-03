@@ -762,7 +762,7 @@ function voiceSampleBlob(sample) {
   const bytes = Uint8Array.from(atob(sample.data), char => char.charCodeAt(0));
   const mimeType = sample.mimeType || 'audio/wav';
   if (/wav/i.test(mimeType)) return new Blob([bytes], { type: mimeType });
-  const rate = Number(mimeType.match(/rate=(\\d+)/i)?.[1]) || 24000;
+  const rate = Number(mimeType.match(/rate=(\d+)/i)?.[1]) || 24000;
   const wav = new ArrayBuffer(44 + bytes.length);
   const view = new DataView(wav);
   const writeText = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
