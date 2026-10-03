@@ -34,7 +34,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0 },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -459,8 +459,8 @@ function handleVoiceMessage(message) {
   if (!content) return;
   const input = content.inputTranscription?.text || content.input_transcription?.text;
   const output = content.outputTranscription?.text || content.output_transcription?.text;
-  if (input) appendCaption($('#voiceUserCaption'), input);
-  if (output) appendCaption($('#voiceAssistantCaption'), output);
+  if (input) { appendCaption($('#voiceUserCaption'), input); voice.turnUser = (voice.turnUser + input).slice(-2400); }
+  if (output) { appendCaption($('#voiceAssistantCaption'), output); voice.turnAssistant = (voice.turnAssistant + output).slice(-2400); }
   if (content.interrupted) {
     stopVoicePlayback(); voice.pendingTurnComplete = false;
     voiceState('listening', 'Ich höre zu', 'Sag einfach weiter — ich bin bei dir.');
@@ -474,6 +474,7 @@ function handleVoiceMessage(message) {
     }
   }
   if (content.turnComplete || content.turn_complete) {
+    saveVoiceTurn();
     voice.pendingTurnComplete = true;
     if (!voice.sources.size) {
       voice.pendingTurnComplete = false;
@@ -515,16 +516,37 @@ function voiceFailure(message) {
   voice.active = false; voice.isReady = false;
   stopVoiceCapture(); stopVoicePlayback();
   try { voice.socket?.close(); } catch {}
+  voice.audioContext?.close().catch(() => {}); voice.audioContext = null;
   voice.socket = null;
   voiceState('error', 'Verbindung unterbrochen', message || 'Der Live-Sprachkanal konnte nicht gestartet werden.');
   $('#voiceRetry').classList.remove('hidden');
   $('#voiceMute').classList.add('hidden');
 }
+function saveVoiceTurn() {
+  const voice = state.voice;
+  const userText = safeText(voice.turnUser).trim();
+  const assistantText = safeText(voice.turnAssistant).trim();
+  voice.turnUser = ''; voice.turnAssistant = '';
+  const created = Date.now();
+  if (userText) {
+    const message = { id: crypto.randomUUID(), role: 'user', text: userText, created };
+    state.messages.push(message); renderMessage(message, false);
+  }
+  if (assistantText) {
+    const message = { id: crypto.randomUUID(), role: 'assistant', text: assistantText, created: created + 1 };
+    state.messages.push(message); renderMessage(message, false);
+  }
+  if (userText || assistantText) {
+    $('#welcome').classList.add('compact');
+    void persistMessages().catch(() => notice('Das Sprachgespräch konnte lokal nicht gespeichert werden.', true));
+    if (userText) captureConversationMemory(userText);
+  }
+}
 async function startLiveVoice(keepDialog = false) {
   const voice = state.voice;
   if (voice.active) return;
   if (!keepDialog && !$('#voiceDialog').open) $('#voiceDialog').showModal();
-  voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false;
+  voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false; voice.turnUser = ''; voice.turnAssistant = '';
   voice.sources = new Set(); voice.nextPlayTime = 0;
   $('#voiceRetry').classList.add('hidden'); $('#voiceMute').classList.remove('hidden');
   $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Live-Gespräch läuft';
@@ -532,6 +554,7 @@ async function startLiveVoice(keepDialog = false) {
   $('#voiceMute').lastElementChild.textContent = 'Mikro stumm';
   $('#voiceUserCaption').textContent = ''; $('#voiceUserCaption').dataset.caption = '';
   $('#voiceAssistantCaption').textContent = ''; $('#voiceAssistantCaption').dataset.caption = '';
+  setConnection('busy', 'Bard AI Live');
   voiceState('connecting', 'Live-Verbindung wird aufgebaut', 'Verbinde sicher mit Bard AI Live.');
   try {
     voice.audioContext = new AudioContext({ latencyHint: 'interactive' });
@@ -584,7 +607,8 @@ function stopLiveVoice(closeDialog = true) {
   if (voice.socket) { try { voice.socket.close(1000, 'User ended session'); } catch {} }
   voice.socket = null;
   voice.audioContext?.close().catch(() => {});
-  voice.audioContext = null; voice.intentionalClose = false;
+  voice.audioContext = null;
+  setConnection('online', 'Verbunden'); voice.intentionalClose = false;
   if (closeDialog && $('#voiceDialog').open) $('#voiceDialog').close();
   $('#voiceButton').classList.remove('listening');
   $('#voiceButton').lastElementChild.textContent = 'Bard AI Live';
