@@ -812,7 +812,10 @@ async function playVoicePreview(name, button) {
     button.textContent = '■ Stoppen';
     $('#voicePickerStatus').textContent = `${name} · Hörprobe läuft`;
   } catch (error) {
-    if (run === voicePreviewRun) $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
+    if (run === voicePreviewRun) {
+      stopVoicePreview();
+      $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
+    }
   } finally {
     button.disabled = false;
     if (run !== voicePreviewRun || voicePreviewAudio?.name !== name) button.textContent = '▶ Anhören';
