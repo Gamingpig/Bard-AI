@@ -1,0 +1,16 @@
+{
+  "name": "Bard AI",
+  "short_name": "Bard AI",
+  "description": "Dein persönlicher KI-Assistent für Chat, Sprache und Bilder.",
+  "lang": "de-DE",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#080b14",
+  "background_color": "#080b14",
+  "icons": [
+    { "src": "icons/bard.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "icons/bard-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

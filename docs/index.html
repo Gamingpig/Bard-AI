@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080b14">
+  <meta name="description" content="Bard AI – dein persönlicher KI-Assistent für Chat, Sprache und Bilder.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https: wss:; media-src blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/bard.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/bard-512.png">
+  <link rel="stylesheet" href="app.css">
+  <title>Bard AI</title>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <button class="icon-button" id="menuButton" aria-label="Menü" title="Menü"><span class="menu-lines"></span></button>
+      <a class="brand" href="./" aria-label="Bard AI Startseite"><img src="icons/bard.svg" alt=""><span>Bard AI</span></a>
+      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="icon-button" id="adminButton" aria-label="Admin öffnen" title="Admin öffnen">⚙</button></div>
+    </header>
+
+    <main>
+      <section class="conversation" aria-label="Gespräch">
+        <div class="welcome" id="welcome">
+          <div class="orb-wrap"><div class="orb-glow"></div><div class="orb"><span class="orb-core"></span><img src="icons/bard.svg" alt="Bard AI"></div><i class="orbit orbit-a"></i><i class="orbit orbit-b"></i></div>
+          <p class="eyebrow">DEIN AI ASSISTANT</p>
+          <span class="model-alias">◈ Bard 5.0 Ultra Beta</span>
+          <h1>Was hast du<br>auf dem Herzen?</h1>
+          <p class="welcome-copy">Chatte, sprich oder lass dir ein Bild gestalten.</p>
+          <form id="nameForm" class="name-form"><label for="userName">Wie darf ich dich nennen?</label><div><input id="userName" maxlength="60" autocomplete="given-name" placeholder="Dein Name"><button class="quiet-button" type="submit">Merken</button></div></form>
+        </div>
+        <div id="messages" class="messages" role="log" aria-live="polite" aria-label="Chatverlauf"></div>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="composer">
+          <button id="imageButton" class="tool-button" aria-label="Bild erstellen" title="Bild erstellen">＋</button>
+          <textarea id="prompt" rows="1" maxlength="12000" placeholder="Frag Bard AI …" aria-label="Nachricht"></textarea>
+          <button id="sendButton" class="send-button" aria-label="Senden" title="Senden">↑</button>
+        </div>
+        <div class="composer-tools"><button id="voiceButton" class="voice-button"><span class="mic-icon">●</span><span>Mit Stimme chatten</span></button><span>Deine Gespräche bleiben auf diesem Gerät.</span><button id="installButton" class="install-button hidden">App installieren</button></div>
+        <p id="notice" class="notice" role="status"></p>
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="adminDialog" class="admin-dialog">
+    <form method="dialog" class="dialog-head"><div><span class="eyebrow">GESCHÜTZTER BEREICH</span><h2>Admin & Verbindung</h2></div><button class="icon-button" aria-label="Schließen">×</button></form>
+    <div class="dialog-body">
+      <section class="setup-card"><label for="backendUrl">Sicherer Backend-Endpunkt</label><div class="inline-field"><input id="backendUrl" type="url" inputmode="url" placeholder="https://…" autocomplete="url"><button id="saveBackendUrl" class="quiet-button">Speichern</button></div><p>Hier kommt die Adresse deines geschützten Bard-Servers hinein. Schlüssel und Provider-Zugangsdaten bleiben auf dem Server.</p></section>
+      <form id="unlockForm" class="setup-card"><label for="adminPassword">Admin-Passwort</label><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Passwort nur für diese Sitzung"><button class="primary-button" type="submit">Entsperren</button></div><p id="adminStatus" class="status-text">Das Passwort wird nicht auf diesem Gerät gespeichert.</p></form>
+      <section id="adminSettings" class="admin-settings hidden">
+        <div class="admin-heading"><div><span class="eyebrow">PROVIDER & MODEL</span><h3>Technische Einstellungen</h3><small id="providerName">Provider: serverseitig geschützt</small></div><button id="lockAdmin" class="quiet-button">Sperren</button></div>
+        <p class="security-note">Änderungen werden verschlüsselt auf dem Backend gespeichert. API-Schlüssel werden nie an diese App zurückgegeben.</p>
+        <label for="liveModel">Live-Modell-ID</label><input id="liveModel" autocomplete="off" spellcheck="false" placeholder="Backend-Modell-ID">
+        <label for="imageModel">Bildmodell-ID</label><input id="imageModel" autocomplete="off" spellcheck="false" placeholder="Backend-Modell-ID">
+        <label for="providerKey">API-Schlüssel ersetzen <span id="keyStatus">Noch nicht eingerichtet</span></label><input id="providerKey" type="password" autocomplete="new-password" placeholder="Neuen Schlüssel eingeben; leer = unverändert">
+        <button id="saveAdminSettings" class="primary-button wide-button">Einstellungen sicher speichern</button>
+      </section>
+    </div>
+  </dialog>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

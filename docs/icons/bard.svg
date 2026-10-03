@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" fill="none">
+  <defs>
+    <linearGradient id="frame" x1="12" y1="8" x2="104" y2="112" gradientUnits="userSpaceOnUse"><stop stop-color="#354767"/><stop offset="1" stop-color="#172036"/></linearGradient>
+    <linearGradient id="signal" x1="28" y1="25" x2="83" y2="86" gradientUnits="userSpaceOnUse"><stop stop-color="#99f8ff"/><stop offset=".48" stop-color="#53d5fa"/><stop offset="1" stop-color="#a595ff"/></linearGradient>
+  </defs>
+  <rect x="1" y="1" width="110" height="110" rx="27" fill="#0e1526" stroke="url(#frame)" stroke-width="2"/>
+  <path d="M30 23H57L76 40L63 51L81 68L61 87H30V23ZM43 35V46H55L61 40L55 35H43ZM43 59V75H57L65 67L57 59H43Z" fill="url(#signal)" fill-rule="evenodd"/>
+  <path d="M80 23H88L80 31H72L80 23Z" fill="#b2a2ff"/>
+</svg>

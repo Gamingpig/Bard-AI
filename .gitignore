@@ -1,0 +1,14 @@
+# Cloudflare/Wrangler local state and credentials
+.dev.vars
+.env
+.env.*
+!.env.example
+.wrangler/
+worker/.dev.vars
+worker/.env*
+worker/node_modules/
+
+# Local build/test output
+node_modules/
+coverage/
+dist/
