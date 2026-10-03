@@ -90,20 +90,15 @@ async function readEncryptedProviderConfig() {
   const value = JSON.parse(new TextDecoder().decode(clear));
   return value && typeof value.apiKey === 'string' ? value : null;
 }
-async function clearEncryptedProviderConfig() {
-  const db = await dbPromise;
-  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').delete('provider-config'));
-  state.providerConfig = null;
-}
 function providerModelUrl(model) {
   const safeModel = String(model || '').trim().replace(/^models\//, '');
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(safeModel)) throw new Error('Bitte eine gültige Gemini-Modell-ID in den Einstellungen speichern.');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(safeModel)) throw new Error('Die PWA-Verbindung enthält keine gültige Gemini-Modell-ID.');
   const path = safeModel.split('/').map(encodeURIComponent).join('/');
   return `${providerOrigin}/v1beta/models/${path}:generateContent`;
 }
 async function generateWithProvider(model, payload) {
   const config = state.providerConfig;
-  if (!config?.apiKey) throw new Error('API-Schlüssel fehlt. Öffne Einstellungen und speichere deinen Gemini-Schlüssel verschlüsselt auf diesem Gerät.');
+  if (!config?.apiKey) throw new Error('Gemini ist noch nicht verbunden. Übertrage die vorhandene Verbindung einmalig aus der Bard AI Extension in diese PWA.');
   let response;
   try {
     response = await fetch(providerModelUrl(model), {
@@ -121,36 +116,28 @@ async function generateWithProvider(model, payload) {
   }
   return data;
 }
-async function loadProviderModels(apiKeyOverride = '') {
-  const apiKey = apiKeyOverride || $('#providerKey').value.trim() || state.providerConfig?.apiKey || '';
-  if (!apiKey) throw new Error('Füge deinen API-Schlüssel ein oder speichere ihn zuerst.');
-  $('#providerStatus').textContent = 'Modellliste wird von Google geladen …';
+async function loadProviderModels(apiKey) {
+  if (!apiKey) throw new Error('Die Gemini-Verbindung fehlt. Öffne in der Extension „Bard AI“ und starte dort einmalig die PWA-Übernahme.');
   let response;
   try {
-    response = await fetch(`${providerOrigin}/v1beta/models?pageSize=100`, { headers: { 'x-goog-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    response = await fetch(providerOrigin + '/v1beta/models?pageSize=100', { headers: { 'x-goog-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(30000) });
   } catch {
-    throw new Error('Modellliste nicht erreichbar. Prüfe Internetverbindung und API-Schlüssel.');
+    throw new Error('Gemini-Modellliste nicht erreichbar. Prüfe Verbindung und API-Schlüssel in der Extension.');
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = String(data.error?.message || `Google antwortet mit Status ${response.status}.`).split(apiKey).join('[maskiert]');
+    const message = String(data.error?.message || 'Google antwortet mit Status ' + response.status + '.').split(apiKey).join('[maskiert]');
     throw new Error(message.slice(0, 500));
   }
   const models = (data.models || []).filter(model => Array.isArray(model.supportedGenerationMethods) && model.supportedGenerationMethods.includes('generateContent'));
-  const list = $('#providerModels'); list.replaceChildren();
-  for (const model of models) {
-    const option = document.createElement('option');
-    option.value = String(model.name || '').replace(/^models\//, '');
-    option.label = String(model.displayName || option.value);
-    if (option.value) list.append(option);
-  }
-  if (!models.length) throw new Error('Google hat keine für Textgenerierung geeigneten Modelle zurückgegeben.');
-  const textModel = models.find(model => !/image|imagen|audio|live|embedding/i.test(model.name || '')) || models[0];
-  const imageModel = models.find(model => /image|imagen/i.test(model.name || ''));
-  if (!$('#liveModel').value) $('#liveModel').value = String(textModel.name || '').replace(/^models\//, '');
-  if (!$('#imageModel').value && imageModel) $('#imageModel').value = String(imageModel.name || '').replace(/^models\//, '');
-  $('#providerStatus').textContent = `${models.length} verfügbare Modelle geladen. Wähle ein Chat-Modell und optional ein Bildmodell.`;
+  if (!models.length) throw new Error('Google hat keine passenden Gemini-Modelle zurückgegeben.');
   return models;
+}
+function chooseProviderModels(apiKey, models, previous = {}) {
+  const available = models.map(model => String(model.name || '').replace(/^models\//, '')).filter(Boolean);
+  const liveModel = available.includes(previous.liveModel) ? previous.liveModel : available.find(model => !/image|imagen|audio|live|embedding/i.test(model)) || available[0];
+  const imageModel = available.includes(previous.imageModel) ? previous.imageModel : available.find(model => /image|imagen/i.test(model)) || '';
+  return { apiKey, liveModel, imageModel };
 }
 function buildSystemInstruction() {
   const savedName = state.name ? `Gewünschte Anrede: ${JSON.stringify(state.name)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.';
@@ -386,61 +373,6 @@ function renderMessages() {
 }
 
 
-function prepareProviderSettings() {
-  const config = state.providerConfig;
-  $('#liveModel').value = config?.liveModel || '';
-  $('#imageModel').value = config?.imageModel || '';
-  $('#providerKey').value = '';
-  $('#providerKey').type = 'password';
-  $('#revealProviderKey').textContent = 'Anzeigen';
-  $('#keyStatus').textContent = config?.apiKey ? 'Schlüssel ist verschlüsselt gespeichert' : 'Noch nicht eingerichtet';
-  $('#providerStatus').textContent = config?.apiKey ? 'Auf diesem Gerät eingerichtet.' : 'Einmalig API-Schlüssel und Modell-ID speichern.';
-}
-function concealProviderSettings() {
-  $('#providerKey').value = '';
-  $('#providerKey').type = 'password';
-  $('#liveModel').value = '';
-  $('#imageModel').value = '';
-  $('#revealProviderKey').textContent = 'Anzeigen';
-}
-async function saveProviderSettings() {
-  const previous = state.providerConfig || {};
-  const apiKey = $('#providerKey').value.trim() || previous.apiKey || '';
-  const liveModel = $('#liveModel').value.trim();
-  const imageModel = $('#imageModel').value.trim();
-  if (!apiKey) throw new Error('Füge deinen Gemini-API-Schlüssel ein.');
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(liveModel)) throw new Error('Bitte eine gültige Chat-Modell-ID eingeben.');
-  if (imageModel && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(imageModel)) throw new Error('Bitte eine gültige Bildmodell-ID eingeben.');
-  state.providerConfig = { apiKey, liveModel, imageModel };
-  try { await saveEncryptedProviderConfig(state.providerConfig); }
-  catch (error) { state.providerConfig = previous.apiKey ? previous : null; throw new Error(`Verschlüsselte Speicherung fehlgeschlagen: ${error.message}`); }
-  $('#providerKey').value = '';
-  $('#providerKey').type = 'password';
-  $('#revealProviderKey').textContent = 'Anzeigen';
-  $('#keyStatus').textContent = 'Schlüssel ist verschlüsselt gespeichert';
-  $('#providerStatus').textContent = 'Verschlüsselt auf diesem Gerät gespeichert. Du kannst Bard AI jetzt verwenden.';
-  setConnection('online', 'Eingerichtet');
-  notice('Provider-Einstellungen verschlüsselt auf diesem Gerät gespeichert.');
-}
-async function testProviderConnection() {
-  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) throw new Error('Speichere zuerst API-Schlüssel und Chat-Modell-ID.');
-  setConnection('busy', 'Teste Verbindung');
-  $('#providerStatus').textContent = 'Gemini-Verbindung wird getestet …';
-  try {
-    await generateWithProvider(state.providerConfig.liveModel, {
-      systemInstruction: { parts: [{ text: 'Antworte exakt mit: OK' }] },
-      contents: [{ role: 'user', parts: [{ text: 'OK' }] }],
-      generationConfig: { maxOutputTokens: 8 }
-    });
-    $('#providerStatus').textContent = 'Verbindung erfolgreich. Gemini hat geantwortet.';
-    setConnection('online', 'Verbunden');
-  } catch (error) {
-    $('#providerStatus').textContent = error.message;
-    setConnection('offline', 'Verbindungsfehler');
-    throw error;
-  }
-}
-
 function typing(show) {
   let row = $('#typingRow');
   if (show && !row) {
@@ -452,14 +384,14 @@ function typing(show) {
 }
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
-  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) { notice('Richte einmalig Gemini API-Schlüssel und Chat-Modell in den Einstellungen ein.', true); $('#adminDialog').showModal(); return; }
+  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) { notice('Gemini ist noch nicht verbunden. Öffne die Bard AI Extension und starte dort einmalig die PWA-Übernahme.', true); return; }
   captureConversationMemory(text);
   const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode) {
-      if (!state.providerConfig.imageModel) throw new Error('Füge zuerst eine Bildmodell-ID in den Einstellungen hinzu.');
+      if (!state.providerConfig.imageModel) throw new Error('Für diesen Anbieter wurde kein Bildmodell bereitgestellt. Prüfe die Bildmodell-Unterstützung in der Gemini-Verbindung.');
       const result = await generateWithProvider(state.providerConfig.imageModel, {
         contents: [{ role: 'user', parts: [{ text: userMessage.text }] }],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
@@ -571,62 +503,22 @@ renderMemory();
 const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
 $('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
-$('#saveProviderSettings').addEventListener('click', async () => {
-  try { await saveProviderSettings(); }
-  catch (error) { notice(error.message, true); }
-});
-$('#testProvider').addEventListener('click', async () => {
-  try { await testProviderConnection(); notice('Gemini-Verbindung funktioniert.'); }
-  catch (error) { notice(error.message, true); }
-});
-$('#loadModels').addEventListener('click', async () => {
-  try { await loadProviderModels(); }
-  catch (error) { $('#providerStatus').textContent = error.message; notice(error.message, true); }
-});
-$('#clearProvider').addEventListener('click', async () => {
-  if (!window.confirm('Gemini-Schlüssel und Modell-IDs von diesem Gerät löschen?')) return;
-  await clearEncryptedProviderConfig(); prepareProviderSettings(); setConnection('offline', 'Nicht eingerichtet');
-  $('#providerStatus').textContent = 'Lokale Provider-Daten wurden gelöscht.';
-  notice('Verschlüsselte Provider-Daten gelöscht.');
-});
-$('#revealProviderKey').addEventListener('click', () => {
-  const reveal = $('#providerKey').type === 'password';
-  if (reveal && !$('#providerKey').value) $('#providerKey').value = state.providerConfig?.apiKey || '';
-  $('#providerKey').type = reveal ? 'text' : 'password';
-  $('#revealProviderKey').textContent = reveal ? 'Ausblenden' : 'Anzeigen';
-});
-$('#adminButton').addEventListener('click', () => { prepareProviderSettings(); $('#adminDialog').showModal(); });
-$('#adminDialog').addEventListener('close', concealProviderSettings);
 window.addEventListener('message', async event => {
   if (event.origin !== extensionOrigin || event.data?.type !== 'bard-ai-import-provider' || typeof event.data.apiKey !== 'string') return;
   const apiKey = event.data.apiKey.trim();
   if (!apiKey || apiKey.length > 512) return;
-  if (!window.confirm('Die vorhandene Gemini-Verbindung aus Bard AI Side Panel verschlüsselt auf diesem Gerät in Bard AI PWA speichern?')) {
-    event.source?.postMessage({ type: 'bard-ai-import-result', ok: false }, event.origin);
-    return;
-  }
   try {
-    prepareProviderSettings();
-    let models = [];
-    try { models = await loadProviderModels(apiKey); } catch {}
-    const config = {
-      apiKey,
-      liveModel: $('#liveModel').value.trim(),
-      imageModel: $('#imageModel').value.trim()
-    };
-    state.providerConfig = config;
+    const models = await loadProviderModels(apiKey);
+    const config = chooseProviderModels(apiKey, models, state.providerConfig || {});
     await saveEncryptedProviderConfig(config);
-    $('#keyStatus').textContent = 'Schlüssel ist verschlüsselt gespeichert';
-    const modelNote = models.length ? 'Modelle wurden geladen und passende Standardmodelle ausgewählt.' : 'Schlüssel gespeichert; Modellliste konnte nicht geladen werden. Öffne Einstellungen und lade die Modelle erneut.';
-    $('#providerStatus').textContent = modelNote;
-    setConnection(config.liveModel ? 'online' : 'offline', config.liveModel ? 'Eingerichtet' : 'Modell fehlt');
-    notice('Provider-Schlüssel aus der Extension wurde lokal verschlüsselt übernommen.');
+    state.providerConfig = config;
+    setConnection('online', 'Verbunden');
+    notice('Gemini-Verbindung und verfügbare Modelle wurden verschlüsselt übernommen.');
     event.source?.postMessage({ type: 'bard-ai-import-result', ok: true }, event.origin);
   } catch (error) {
-    $('#providerStatus').textContent = `Import fehlgeschlagen: ${error.message}`;
+    setConnection('offline', 'Verbindung fehlt');
+    notice('Verbindung konnte nicht übernommen werden: ' + error.message, true);
     event.source?.postMessage({ type: 'bard-ai-import-result', ok: false }, event.origin);
-  } finally {
-    concealProviderSettings();
   }
 });
 if (window.opener) window.opener.postMessage({ type: 'bard-ai-pwa-ready' }, extensionOrigin);
@@ -635,7 +527,6 @@ $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
 $('#voiceButton').addEventListener('click', startRecognition);
-$('#menuButton').addEventListener('click', () => { prepareProviderSettings(); $('#adminDialog').showModal(); });
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
 window.addEventListener('pagehide', stopRecognition);
@@ -644,8 +535,8 @@ readEncryptedProviderConfig().then(config => {
   state.providerConfig = config;
   if (config?.apiKey && config.liveModel) setConnection('online', 'Eingerichtet');
   else setConnection('offline', 'Einrichtung nötig');
-  $('#keyStatus').textContent = config?.apiKey ? 'Schlüssel ist verschlüsselt gespeichert' : 'Noch nicht eingerichtet';
-  $('#providerStatus').textContent = config?.apiKey ? 'Auf diesem Gerät eingerichtet.' : 'Einmalig API-Schlüssel und Modell-ID speichern.';
+  if (!config?.apiKey || !config.liveModel) notice('Gemini einmalig aus der Bard AI Extension übernehmen, um zu starten.');
 }).catch(error => { setConnection('offline', 'Speicherfehler'); notice(`Verschlüsselter Speicher konnte nicht geöffnet werden: ${error.message}`, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
 
