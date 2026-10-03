@@ -585,8 +585,9 @@ async function startLiveVoice(keepDialog = false) {
       socket.onclose = event => {
         clearTimeout(timeout);
         if (voice.active && !voice.intentionalClose) {
-          if (!voice.isReady) reject(new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + event.code + ').'));
-          else voiceFailure('Die Live-Verbindung wurde beendet. Starte den Sprachmodus erneut.');
+          const detail = event.reason ? event.reason.slice(0, 180) : 'Code ' + event.code;
+          if (!voice.isReady) reject(new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + detail + ').'));
+          else voiceFailure('Die Live-Verbindung wurde beendet (' + detail + '). Starte den Sprachmodus erneut.');
         }
       };
     });
