@@ -475,7 +475,7 @@ function captureConversationMemory(text) {
   }
   const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte|\bbitte nicht vergessen)[\s,:-]+(?:dass\s+)?(.+)/iu);
   if (explicit?.[1]) changed = remember(explicit[1]) || changed;
-  const stableFact = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich spiele gern|ich mache gern|ich fahre gern|ich fahre gerne|ich gehe gern|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+([^.!?\n]{2,140})/iu);
+  const stableFact = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich komme aus|ich spreche|ich nutze|ich verwende|ich spiele gern|ich mache gern|ich fahre gern|ich fahre gerne|ich gehe gern|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+([^.!?\n]{2,140})/iu) || normalized.match(/\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder)|i have (?:a dog|a cat|a pet|children))\s+([^.!?\n]{2,120})?/iu);
   if (stableFact?.[1]) changed = remember(stableFact[1] + ' ' + stableFact[2]) || changed;
   return changed;
 }
@@ -506,7 +506,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode) {
-      const result = await requestWorker('/api/image', { prompt: userMessage.text, userName: state.name, memory: state.memory, context: buildPreviousContext() });
+      const result = await requestWorker('/api/image', { prompt: userMessage.text, userName: state.name, memory: state.memory, context: buildLiveContext().slice(0, -1) });
       if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
       const answer = {
         id: crypto.randomUUID(), role: 'assistant',
