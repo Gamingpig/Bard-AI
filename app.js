@@ -1039,7 +1039,7 @@ function renderVoicePicker() {
     const style = document.createElement('span'); style.className = 'voice-choice-style'; style.textContent = voice.style;
     label.append(name, style);
     const actions = document.createElement('div'); actions.className = 'voice-choice-actions';
-    const preview = document.createElement('button'); preview.type = 'button'; preview.dataset.previewVoice = voice.name; preview.textContent = '▶ Anhören';
+    const preview = document.createElement('button'); preview.type = 'button'; preview.dataset.previewVoice = voice.name; preview.textContent = '▶ Anhören'; preview.disabled = state.voice.active; preview.title = state.voice.active ? 'Beende zuerst das laufende Live-Gespräch.' : 'Live-Stimme anhören';
     preview.addEventListener('click', () => void playVoicePreview(voice.name, preview));
     const use = document.createElement('button'); use.type = 'button'; use.className = 'voice-choice-use'; use.setAttribute('aria-pressed', String(selected)); use.textContent = selected ? 'Ausgewählt' : 'Verwenden';
     use.addEventListener('click', () => {
@@ -1055,7 +1055,7 @@ function renderVoicePicker() {
 updateVoicePickerTrigger();
 function openVoicePicker() {
   renderVoicePicker();
-  $('#voicePickerStatus').textContent = '';
+  $('#voicePickerStatus').textContent = state.voice.active ? 'Beende zuerst das laufende Live-Gespräch, um einzelne Stimmen anzuhören.' : '';
   $('#voicePickerDialog').showModal();
 }
 $('#voicePickerOpen').addEventListener('click', openVoicePicker);
