@@ -1,7 +1,31 @@
 const $ = selector => document.querySelector(selector);
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 1);
-  request.onupgradeneeded = () => request.result.createObjectStore('messages', { keyPath: 'id' });
+  const request = indexedDB.open('bard-ai-pwa', 2);
+  request.onupgradeneeded = event => {
+    const db = request.result;
+    const tx = request.transaction;
+    const chats = db.objectStoreNames.contains('chats') ? tx.objectStore('chats') : db.createObjectStore('chats', { keyPath: 'id' });
+    const messages = db.objectStoreNames.contains('messages') ? tx.objectStore('messages') : db.createObjectStore('messages', { keyPath: 'id' });
+    if (!messages.indexNames.contains('chatTime')) messages.createIndex('chatTime', ['chatId', 'created']);
+    if (event.oldVersion < 2 && event.oldVersion > 0) {
+      const legacyId = 'legacy-main';
+      const now = Date.now();
+      const legacy = { id: legacyId, title: 'Bisheriger Chat', created: now, updated: now };
+      chats.put(legacy);
+      const cursorRequest = messages.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        const row = cursor.value;
+        row.chatId ||= legacyId;
+        row.created ||= now;
+        if (row.role === 'user' && legacy.title === 'Bisheriger Chat') legacy.title = String(row.text || 'Bisheriger Chat').slice(0, 60);
+        cursor.update(row);
+        cursor.continue();
+        chats.put(legacy);
+      };
+    }
+  };
   request.onsuccess = () => resolve(request.result);
   request.onerror = () => reject(request.error);
 });
@@ -20,7 +44,8 @@ const state = {
   name: localStorage.getItem('bard_user_name') || '',
   memory: (() => { try { const value = JSON.parse(localStorage.getItem('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
-  messages: []
+  messages: [],
+  chatId: localStorage.getItem('bard_active_chat') || ''
 };
 
 function applyTheme(theme, save = false) {
@@ -64,28 +89,139 @@ function setConnection(value, label) {
 function safeText(text) { return String(text || '').replace(/\u0000/g, '').slice(0, 12000); }
 function persistMessages() {
   return dbPromise.then(db => new Promise((resolve, reject) => {
-    const tx = db.transaction('messages', 'readwrite');
+    if (!state.chatId) { reject(new Error('Kein aktiver Chat ausgewählt.')); return; }
+    const tx = db.transaction(['messages', 'chats'], 'readwrite');
     const store = tx.objectStore('messages');
-    store.clear();
     const rows = state.messages.slice(-80);
-    const imageRows = rows.filter(message => message.image).slice(-8);
-    const keepImages = new Set(imageRows.map(message => message.id));
-    for (const message of rows) { const row = { ...message }; if (row.image && !keepImages.has(row.id)) delete row.image; store.put(row); }
+    const keep = new Set(rows.map(message => message.id));
+    const range = IDBKeyRange.bound([state.chatId, 0], [state.chatId, Number.MAX_SAFE_INTEGER]);
+    const cursorRequest = store.index('chatTime').openCursor(range);
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (cursor) { if (!keep.has(cursor.value.id)) cursor.delete(); cursor.continue(); return; }
+      const imageRows = rows.filter(message => message.image).slice(-8);
+      const keepImages = new Set(imageRows.map(message => message.id));
+      for (const message of rows) {
+        const row = { ...message, chatId: state.chatId, created: Number(message.created) || Date.now() };
+        if (row.image && !keepImages.has(row.id)) delete row.image;
+        store.put(row);
+      }
+      const chats = tx.objectStore('chats');
+      const chatRequest = chats.get(state.chatId);
+      chatRequest.onsuccess = () => {
+        const chat = chatRequest.result;
+        if (!chat) return;
+        const firstUserMessage = rows.find(message => message.role === 'user');
+        if (firstUserMessage && (!chat.title || chat.title === 'Neues Gespräch' || chat.title === 'Bisheriger Chat')) chat.title = firstUserMessage.text.slice(0, 60);
+        chat.updated = Date.now(); chats.put(chat);
+      };
+    };
     tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error || new Error('Der Chat konnte nicht gespeichert werden.'));
+    tx.onabort = () => reject(tx.error || new Error('Der Chat konnte nicht gespeichert werden.'));
   }));
+}
+function idbRequest(request) { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
+async function readChatMessages(db, chatId) {
+  const range = IDBKeyRange.bound([chatId, 0], [chatId, Number.MAX_SAFE_INTEGER]);
+  const rows = await idbRequest(db.transaction('messages').objectStore('messages').index('chatTime').getAll(range));
+  return rows.sort((a, b) => a.created - b.created).slice(-80);
+}
+async function createChatRecord(db, title = 'Neues Gespräch') {
+  const now = Date.now();
+  const chat = { id: crypto.randomUUID(), title, created: now, updated: now };
+  await idbRequest(db.transaction('chats', 'readwrite').objectStore('chats').add(chat));
+  state.chatId = chat.id; state.messages = [];
+  localStorage.setItem('bard_active_chat', chat.id);
+  resetConversationView();
+  await renderChatLibrary();
+  return chat;
+}
+function resetConversationView() {
+  $('#messages').replaceChildren();
+  $('#welcome').classList.remove('hidden', 'compact');
+  $('#prompt').value = ''; resizePrompt();
+  $('#currentChatTitle').textContent = 'Neues Gespräch';
 }
 async function restoreMessages() {
   const db = await dbPromise;
-  const rows = await new Promise((resolve, reject) => {
-    const request = db.transaction('messages').objectStore('messages').getAll();
-    request.onsuccess = () => resolve(request.result.slice(-80));
-    request.onerror = () => reject(request.error);
-  });
-  state.messages = rows;
-  for (const item of rows) renderMessage(item, false);
-  if (rows.length) $('#welcome').classList.add('compact');
+  let chats = await idbRequest(db.transaction('chats').objectStore('chats').getAll());
+  if (!chats.length) {
+    const now = Date.now();
+    const chat = { id: crypto.randomUUID(), title: 'Neues Gespräch', created: now, updated: now };
+    await idbRequest(db.transaction('chats', 'readwrite').objectStore('chats').add(chat));
+    chats = [chat];
+  }
+  chats.sort((a, b) => b.updated - a.updated);
+  let chat = chats.find(item => item.id === state.chatId);
+  if (!chat) chat = chats[0];
+  state.chatId = chat.id; localStorage.setItem('bard_active_chat', chat.id);
+  state.messages = await readChatMessages(db, chat.id);
+  resetConversationView();
+  $('#currentChatTitle').textContent = chat.title || 'Neues Gespräch';
+  for (const item of state.messages) renderMessage(item, false);
+  if (state.messages.length) $('#welcome').classList.add('compact');
+  await renderChatLibrary();
 }
+async function renderChatLibrary() {
+  const db = await dbPromise;
+  const chats = await idbRequest(db.transaction('chats').objectStore('chats').getAll());
+  chats.sort((a, b) => b.updated - a.updated);
+  const list = $('#chatList'); list.replaceChildren();
+  $('#chatCount').textContent = String(chats.length);
+  if (!chats.length) { const empty = document.createElement('p'); empty.className = 'chat-empty'; empty.textContent = 'Noch keine Chats. Starte ein neues Gespräch.'; list.append(empty); return; }
+  for (const chat of chats) {
+    const row = document.createElement('article'); row.className = `saved-chat${chat.id === state.chatId ? ' active' : ''}`;
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'saved-chat-open'; open.dataset.chatId = chat.id; open.setAttribute('aria-current', String(chat.id === state.chatId));
+    const title = document.createElement('strong'); title.textContent = chat.title || 'Neues Gespräch';
+    const date = document.createElement('small'); date.textContent = new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(chat.updated || chat.created);
+    open.append(title, date); open.addEventListener('click', () => void switchChat(chat.id).catch(error => notice(error.message, true)));
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'delete-chat'; remove.textContent = 'Löschen'; remove.setAttribute('aria-label', `Chat ${chat.title || ''} löschen`);
+    remove.addEventListener('click', () => void deleteChat(chat.id).catch(error => notice(error.message, true)));
+    row.append(open, remove); list.append(row);
+  }
+}
+async function switchChat(chatId) {
+  if (chatId === state.chatId) { $('#chatDialog').close(); return; }
+  if (state.busy) { notice('Warte, bis die aktuelle Antwort fertig ist, bevor du den Chat wechselst.', true); return; }
+  await persistMessages();
+  const db = await dbPromise;
+  const chat = await idbRequest(db.transaction('chats').objectStore('chats').get(chatId));
+  if (!chat) throw new Error('Dieser Chat wurde nicht gefunden.');
+  state.chatId = chatId; localStorage.setItem('bard_active_chat', chatId);
+  state.messages = await readChatMessages(db, chatId);
+  resetConversationView();
+  $('#currentChatTitle').textContent = chat.title || 'Neues Gespräch';
+  for (const item of state.messages) renderMessage(item, false);
+  if (state.messages.length) $('#welcome').classList.add('compact');
+  await renderChatLibrary(); $('#chatDialog').close();
+}
+async function deleteChat(chatId) {
+  if (state.busy) { notice('Warte, bis die aktuelle Antwort fertig ist, bevor du einen Chat löschst.', true); return; }
+  if (!window.confirm('Diesen Chat und seine Nachrichten auf diesem Gerät löschen?')) return;
+  if (chatId === state.chatId) await persistMessages();
+  const db = await dbPromise;
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(['messages', 'chats'], 'readwrite');
+    const store = tx.objectStore('messages');
+    const range = IDBKeyRange.bound([chatId, 0], [chatId, Number.MAX_SAFE_INTEGER]);
+    const cursor = store.index('chatTime').openCursor(range);
+    cursor.onsuccess = () => { const item = cursor.result; if (item) { item.delete(); item.continue(); } else tx.objectStore('chats').delete(chatId); };
+    tx.oncomplete = resolve; tx.onerror = tx.onabort = () => reject(tx.error || new Error('Chat konnte nicht gelöscht werden.'));
+  });
+  if (chatId === state.chatId) {
+    const chats = await idbRequest(db.transaction('chats').objectStore('chats').getAll());
+    if (chats.length) { chats.sort((a, b) => b.updated - a.updated); state.chatId = chats[0].id; localStorage.setItem('bard_active_chat', state.chatId); }
+    else await createChatRecord(db);
+    const active = await idbRequest(db.transaction('chats').objectStore('chats').get(state.chatId));
+    state.messages = await readChatMessages(db, state.chatId); resetConversationView();
+    $('#currentChatTitle').textContent = active?.title || 'Neues Gespräch';
+    for (const item of state.messages) renderMessage(item, false);
+    if (state.messages.length) $('#welcome').classList.add('compact');
+  }
+  await renderChatLibrary();
+}
+
 function addTextParts(parent, text) {
   const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
   for (const content of paragraphs) {
@@ -309,6 +445,10 @@ $('#backendUrl').value = state.backend;
 $('#userName').value = state.name;
 applyTheme(state.theme);
 $('#themeToggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark', true));
+$('#chatsButton').addEventListener('click', async () => { await renderChatLibrary(); $('#chatDialog').showModal(); });
+$('#newChatButton').addEventListener('click', async () => { if (state.busy) { notice('Warte, bis die Antwort fertig ist, bevor du einen neuen Chat startest.', true); return; } await persistMessages(); await createChatRecord(await dbPromise); $('#chatDialog').close(); notice('Neuer Chat erstellt.'); });
+$('#closeChatDialog').addEventListener('click', () => $('#chatDialog').close());
+$('#chatDialog').addEventListener('click', event => { if (event.target === $('#chatDialog')) $('#chatDialog').close(); });
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', event => {
   if (!localStorage.getItem('bard_theme')) applyTheme(event.matches ? 'light' : 'dark');
 });
