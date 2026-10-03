@@ -798,7 +798,11 @@ function voiceFailure(message) {
   try { voice.socket?.close(); } catch {}
   voice.audioContext?.close().catch(() => {}); voice.audioContext = null;
   voice.socket = null;
-  voiceState('error', 'Verbindung unterbrochen', message || 'Der Live-Sprachkanal konnte nicht gestartet werden.');
+  const detail = message || 'Der Live-Sprachkanal konnte nicht gestartet werden.';
+  const userMessage = isProviderQuotaError({ message: detail })
+    ? 'Google meldet, dass das Gemini-Live-Kontingent des API-Projekts erschöpft ist. Prüfe das Projekt des PWA-Worker-Schlüssels unter aistudio.google.com/rate-limit; bei verbrauchter Modellquote hilft nur der Google-Reset oder eine höhere Freigabe.'
+    : detail.slice(0, 360);
+  voiceState('error', 'Verbindung unterbrochen', userMessage);
   $('#voiceRetry').classList.remove('hidden');
   $('#voiceMute').classList.add('hidden');
 }
@@ -826,6 +830,79 @@ async function saveVoiceTurn() {
     await persistMessages();
   }
 }
+function configureVoiceSession(result) {
+  const config = { ...(result.config || {}) };
+  const generationConfig = config.generationConfig || {};
+  config.generationConfig = {
+    ...generationConfig,
+    speechConfig: {
+      ...(generationConfig.speechConfig || {}),
+      voiceConfig: {
+        ...(generationConfig.speechConfig?.voiceConfig || {}),
+        prebuiltVoiceConfig: { voiceName: state.voice.voiceName || 'Puck' }
+      }
+    }
+  };
+  return config;
+}
+function openLiveSocket(result, config, model = result.model) {
+  const voice = state.voice;
+  const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
+  const socket = new WebSocket(socketUrl);
+  socket.binaryType = 'arraybuffer';
+  voice.socket = socket;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (callback === reject) {
+        try { socket.close(1000, 'Live setup failed'); } catch {}
+        if (voice.socket === socket) voice.socket = null;
+      }
+      callback(value);
+    };
+    const timeout = setTimeout(() => finish(reject, new Error('Der Live-Kanal hat innerhalb von 45 Sekunden keine Setup-Bestätigung gesendet.')), 45000);
+    socket.onopen = () => {
+      try { socket.send(JSON.stringify({ setup: { model, ...config } })); }
+      catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
+    };
+    socket.onmessage = async event => {
+      let message;
+      try {
+        const data = event.data;
+        const text = typeof data === 'string' ? data
+          : data instanceof Blob ? await data.text()
+          : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
+          : ArrayBuffer.isView(data) ? new TextDecoder().decode(data)
+          : '';
+        if (!text) throw new TypeError('Leere oder unbekannte Nachricht');
+        message = JSON.parse(text);
+      } catch (error) {
+        const detail = error instanceof TypeError ? 'Format ' + (event.data?.constructor?.name || typeof event.data) : 'ungültiges JSON';
+        finish(reject, new Error('Live-Kanal-Nachricht konnte nicht gelesen werden (' + detail + ').'));
+        return;
+      }
+      if (message.setupComplete || message.setup_complete) { finish(resolve); return; }
+      if (message.error?.message) {
+        finish(reject, new Error(String(message.error.message).slice(0, 1000)));
+        return;
+      }
+      handleVoiceMessage(message);
+    };
+    socket.onerror = () => finish(reject, new Error('Die Verbindung zu Bard AI Live ist fehlgeschlagen.'));
+    socket.onclose = event => {
+      if (!voice.active || voice.intentionalClose || settled) return;
+      const detail = event.reason ? event.reason.slice(0, 1000) : 'Code ' + event.code;
+      if (!voice.isReady) finish(reject, new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + detail + ').'));
+      else voiceFailure('Die Live-Verbindung wurde beendet (' + detail + '). Starte den Sprachmodus erneut.');
+    };
+  });
+}
+function isProviderQuotaError(error) {
+  return /resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota|\b429\b/i.test(error?.message || '');
+}
 async function startLiveVoice(keepDialog = false) {
   const voice = state.voice;
   if (voice.active) return;
@@ -843,79 +920,30 @@ async function startLiveVoice(keepDialog = false) {
     voice.audioContext = new AudioContext({ latencyHint: 'interactive' });
     await voice.audioContext.resume();
     voice.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    const result = await requestWorker('/api/live-token', {
+    const tokenRequest = {
       userName: state.name,
       memory: state.memory,
       voiceName: voice.voiceName,
       context: buildLiveContext()
-    });
+    };
+    const result = await requestWorker('/api/live-token', tokenRequest);
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
-    const liveConfig = { ...result.config };
-    if (voice.voiceName) {
-      const generationConfig = liveConfig.generationConfig || {};
-      liveConfig.generationConfig = {
-        ...generationConfig,
-        speechConfig: {
-          ...(generationConfig.speechConfig || {}),
-          voiceConfig: {
-            ...(generationConfig.speechConfig?.voiceConfig || {}),
-            prebuiltVoiceConfig: { voiceName: voice.voiceName }
-          }
-        }
-      };
+    try {
+      await openLiveSocket(result, configureVoiceSession(result));
+    } catch (primaryError) {
+      const fallbackModel = 'models/gemini-3.1-flash-live-preview';
+      const primaryModel = String(result.model).replace(/^models\//, '');
+      if (!isProviderQuotaError(primaryError) || primaryModel === fallbackModel.replace(/^models\//, '')) throw primaryError;
+      voiceState('connecting', 'Wechsle Live-Modell', 'Google meldet eine Modell-Quota. Ich versuche einmal die dokumentierte Live-Kompatibilitätsroute.');
+      const fallback = await requestWorker('/api/live-token', tokenRequest);
+      if (!fallback.token || !fallback.config) throw primaryError;
+      try {
+        await openLiveSocket(fallback, configureVoiceSession(fallback), fallbackModel);
+        notice('Das Standard-Live-Modell hatte keine freie Quota. Verbunden über die Live-Kompatibilitätsroute.', false);
+      } catch (fallbackError) {
+        throw new Error(`${primaryError.message || 'Standard-Live-Modell nicht verfügbar.'} ${fallbackError.message || 'Auch die Live-Kompatibilitätsroute konnte nicht verbinden.'}`);
+      }
     }
-    const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
-    const socket = new WebSocket(socketUrl); socket.binaryType = 'arraybuffer'; voice.socket = socket;
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        callback(value);
-      };
-      const timeout = setTimeout(() => {
-        finish(reject, new Error('Der Live-Kanal hat innerhalb von 45 Sekunden keine Setup-Bestätigung gesendet.'));
-        try { socket.close(4000, 'Setup timeout'); } catch {}
-      }, 45000);
-      socket.onopen = () => {
-        try { socket.send(JSON.stringify({ setup: { model: result.model, ...liveConfig } })); }
-        catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
-      };
-      socket.onmessage = async event => {
-        let message;
-        try {
-          const data = event.data;
-          const text = typeof data === 'string' ? data
-            : data instanceof Blob ? await data.text()
-            : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
-            : ArrayBuffer.isView(data) ? new TextDecoder().decode(data)
-            : '';
-          if (!text) throw new TypeError('Leere oder unbekannte Nachricht');
-          message = JSON.parse(text);
-        } catch (error) {
-          const detail = error instanceof TypeError ? 'Format ' + (event.data?.constructor?.name || typeof event.data) : 'ungültiges JSON';
-          finish(reject, new Error('Live-Kanal-Nachricht konnte nicht gelesen werden (' + detail + ').'));
-          return;
-        }
-        if (message.setupComplete || message.setup_complete) {
-          finish(resolve);
-          return;
-        }
-        if (message.error?.message) {
-          finish(reject, new Error(String(message.error.message).slice(0, 300)));
-          return;
-        }
-        handleVoiceMessage(message);
-      };
-      socket.onerror = () => finish(reject, new Error('Die Verbindung zu Bard AI Live ist fehlgeschlagen.'));
-      socket.onclose = event => {
-        if (!voice.active || voice.intentionalClose) return;
-        const detail = event.reason ? event.reason.slice(0, 180) : 'Code ' + event.code;
-        if (!voice.isReady) finish(reject, new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + detail + ').'));
-        else voiceFailure('Die Live-Verbindung wurde beendet (' + detail + '). Starte den Sprachmodus erneut.');
-      };
-    });
     if (!voice.active) return;
     voice.isReady = true;
     await startVoiceCapture();
@@ -1202,5 +1230,6 @@ window.addEventListener('pagehide', () => stopLiveVoice(false));
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
 
 
