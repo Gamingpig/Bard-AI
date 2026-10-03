@@ -34,10 +34,11 @@ This Cloudflare Worker keeps provider credentials and the admin password out of 
 5. Deploy with `npm run deploy`. Copy the resulting `https://…workers.dev` address into Bard AI’s Admin & Verbindung dialog.
 6. Unlock the admin panel and enter the provider model IDs and API key. The Worker encrypts them before storing them in KV; the key is never returned to the browser. Leave the API-key field blank to keep the current key.
 
-The Worker allows browser requests only from `https://gamingpig.github.io`, applies a short-lived signed admin session, and rate-limits password attempts. Chat and image generation also require that session, preventing the public Pages app from becoming an unauthenticated proxy. Changing the Pages hostname requires changing `PAGES_ORIGIN` in `wrangler.toml` and redeploying.
+The Worker allows browser requests from `https://gamingpig.github.io`, protects provider configuration with a short-lived signed admin session, and rate-limits password attempts. Chat and image generation do not require the admin password; they use per-IP daily limits (60 chat requests and 8 image requests) to bound public use. CORS is a browser restriction rather than authentication, so set appropriate provider billing limits and rotate keys if abuse is suspected. Changing the Pages hostname requires changing `PAGES_ORIGIN` in `wrangler.toml` and redeploying.
 
 ## Local checks
 
 Run `npm run check` to parse the Worker source. `npm run dev` starts the local Wrangler preview after the KV binding and secrets have been configured for local development.
 
 Provider availability, pricing, model limits, and image-generation quotas are controlled by the selected provider. This project cannot promise unlimited or quota-free generation.
+
