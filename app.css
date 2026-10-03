@@ -270,3 +270,23 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 }
 
 .voice-button.listening { border-color:var(--cyan); background:color-mix(in srgb,var(--cyan) 14%,var(--surface)); color:var(--text); box-shadow:0 0 20px color-mix(in srgb,var(--cyan) 24%,transparent); }
+
+/* Voice selection */
+
+.voice-controls { display:grid; grid-template-columns:minmax(210px,260px) auto auto; align-items:end; justify-content:center; gap:12px; }
+.voice-voice-picker { display:grid; gap:6px; min-width:0; color:var(--muted-strong); text-align:left; font-size:12px; }
+.voice-voice-picker label { padding-left:4px; color:var(--text); font-weight:650; }
+.voice-voice-picker select { width:100%; min-height:44px; border:1px solid var(--line); border-radius:14px; padding:0 38px 0 14px; background:var(--surface); color:var(--text); font:inherit; cursor:pointer; }
+.voice-voice-picker select:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+.voice-voice-picker option { background:var(--surface); color:var(--text); }
+.voice-voice-picker small { min-height:14px; padding-left:4px; color:var(--muted); font-size:10px; }
+@media(max-width:600px) {
+  .voice-controls { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:9px; }
+  .voice-voice-picker { grid-column:1 / -1; }
+  .voice-voice-picker select { min-height:46px; }
+  .voice-end { grid-column:1 / -1; }
+}
+@media(max-height:650px) {
+  .voice-voice-picker { gap:4px; }
+  .voice-voice-picker select { min-height:38px; }
+}
