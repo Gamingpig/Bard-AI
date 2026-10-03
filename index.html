@@ -57,17 +57,18 @@
   </dialog>
 
   <dialog id="adminDialog" class="admin-dialog">
-    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · EINRICHTUNG</span><h2>Verbindung & Einstellungen</h2><p>Diese Adresse brauchst du einmalig. Chats und Bilder funktionieren anschließend ohne Admin-Passwort.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
+    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · AUF DIESEM GERÄT</span><h2>Gemini verbinden</h2><p>Kein Backend und kein Admin-Passwort nötig. Deine Provider-Daten werden lokal verschlüsselt gespeichert.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
     <div class="dialog-body">
-      <section class="setup-card"><div class="setup-label"><span class="step-number">1</span><label for="backendUrl">Bard-Server</label></div><div class="inline-field"><input id="backendUrl" type="url" inputmode="url" placeholder="https://…workers.dev" autocomplete="url"><button id="saveBackendUrl" class="quiet-button">Verbinden</button></div><p>Die Serveradresse wird auf diesem Gerät gespeichert. API-Schlüssel und Anbieterdaten bleiben geschützt auf dem Server.</p></section>
-      <form id="unlockForm" class="setup-card"><div class="setup-label"><span class="step-number">2</span><label for="adminPassword">Nur Admin-Einstellungen freischalten</label></div><div class="inline-field"><input id="adminPassword" type="password" autocomplete="current-password" required placeholder="Dein Admin-Passwort"><button class="primary-button" type="submit">Freischalten</button></div><p id="adminStatus" class="status-text">Das Passwort wird nur für Modell- und Provider-Einstellungen benötigt. Chatten und Bilder erstellen geht ohne Passwort.</p></form>
-      <section id="adminSettings" class="admin-settings hidden">
-        <div class="admin-heading"><div><span class="eyebrow">PROVIDER & MODEL</span><h3>Technische Einstellungen</h3><small id="providerName">Provider: serverseitig geschützt</small></div><button id="lockAdmin" class="quiet-button">Sperren</button></div>
-        <p class="security-note">Änderungen werden verschlüsselt auf dem Backend gespeichert. API-Schlüssel werden nie an diese App zurückgegeben.</p>
-        <label for="liveModel">Live-Modell-ID</label><input id="liveModel" autocomplete="off" spellcheck="false" placeholder="Backend-Modell-ID">
-        <label for="imageModel">Bildmodell-ID</label><input id="imageModel" autocomplete="off" spellcheck="false" placeholder="Backend-Modell-ID">
-        <label for="providerKey">API-Schlüssel ersetzen <span id="keyStatus">Noch nicht eingerichtet</span></label><input id="providerKey" type="password" autocomplete="new-password" placeholder="Neuen Schlüssel eingeben; leer = unverändert">
-        <button id="saveAdminSettings" class="primary-button wide-button">Einstellungen sicher speichern</button>
+      <section class="setup-card provider-settings">
+        <div class="setup-label"><span class="step-number">1</span><label for="providerKey">Google Gemini API-Schlüssel</label><small id="keyStatus">Noch nicht eingerichtet</small></div>
+        <div class="inline-field"><input id="providerKey" type="password" autocomplete="off" spellcheck="false" placeholder="Schlüssel hier einfügen"><button id="revealProviderKey" class="quiet-button" type="button">Anzeigen</button></div>
+        <button id="loadModels" class="quiet-button model-discovery" type="button">Modellliste von Google laden</button>
+        <datalist id="providerModels"></datalist>
+        <label for="liveModel">Chat-Modell-ID</label><input id="liveModel" list="providerModels" autocomplete="off" spellcheck="false" placeholder="Modell aus der Liste wählen">
+        <label for="imageModel">Bildmodell-ID <span>optional</span></label><input id="imageModel" list="providerModels" autocomplete="off" spellcheck="false" placeholder="Bildmodell aus der Liste wählen">
+        <div class="provider-actions"><button id="saveProviderSettings" class="primary-button">Verschlüsselt speichern</button><button id="testProvider" class="quiet-button">Verbindung testen</button><button id="clearProvider" class="quiet-button danger-button">Daten löschen</button></div>
+        <p id="providerStatus" class="status-text">Noch nicht eingerichtet.</p>
+        <p class="security-note">Der Schlüssel wird mit AES-GCM auf diesem Gerät gespeichert. Zum Senden wird er im Browser entschlüsselt und direkt an Google Gemini übermittelt. Beschränke den Schlüssel in AI Studio auf die Gemini API.</p>
       </section>
     </div>
   </dialog>
