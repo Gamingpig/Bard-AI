@@ -75,7 +75,9 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .welcome h1 { margin: 15px 0 10px; font-size: clamp(32px, 7vw, 48px); font-weight: 650; letter-spacing: -.055em; line-height: 1.08; }
 .welcome-copy { color: var(--muted); font-size: 14px; }
 .welcome.compact { width: 100%; max-width: 680px; margin: 0 auto; padding: 12px 8px 2px; text-align: left; }
-.welcome.compact .orb-wrap, .welcome.compact .eyebrow, .welcome.compact .model-alias, .welcome.compact .name-form { display: none; }
+.welcome.compact .orb-wrap, .welcome.compact .eyebrow, .welcome.compact .model-alias { display: none; }
+.welcome.compact:not(.needs-name) .name-form { display: none; }
+.welcome.compact.needs-name .name-form { max-width: 350px; margin: 14px 0 0; box-shadow: none; }
 .welcome.compact h1 { margin: 0; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; }
 .welcome.compact h1 br { display: none; }
 .welcome.compact .welcome-copy { margin: 3px 0 0; font-size: 11px; }
