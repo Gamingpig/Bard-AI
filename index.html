@@ -66,7 +66,10 @@
         <div class="voice-live-state"><span class="voice-state-pip"></span><span id="voiceStateLabel">Verbindung wird aufgebaut …</span></div>
         <p id="voiceStateHint" class="voice-state-hint">Einen Moment, ich richte den Live-Kanal ein.</p>
         <button id="voicePickerOpen" class="voice-picker-trigger" type="button"><span>Stimme</span><strong id="voiceSelectedLabel">Standard</strong><span aria-hidden="true">⌄</span></button>
-        <div class="voice-captions" aria-live="polite"><p id="voiceUserCaption"></p><p id="voiceAssistantCaption"></p></div>
+        <section class="voice-transcript-panel" aria-label="Live-Transkript">
+          <header class="voice-transcript-head"><strong>GESPRÄCH</strong><span><i></i> Live-Transkript</span></header>
+          <div id="voiceTranscript" class="voice-captions" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Gesprächsverlauf"><p id="voiceTranscriptEmpty" class="voice-transcript-empty">Dein Gespräch erscheint hier, sobald ihr sprecht.</p></div>
+        </section>
       </div>
       <footer class="voice-controls">
         <button id="voiceMute" class="voice-control" aria-pressed="false"><span class="control-glyph">⌁</span><span>Mikro stumm</span></button>
