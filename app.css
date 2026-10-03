@@ -304,7 +304,7 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
   .voice-transcript-speaker { font-size:8px; }
 }
 @media(prefers-reduced-motion:reduce) {
-  .voice-scene::before,.voice-scene::after,.voice-orb,.voice-orb::before,.voice-orb::after,.voice-orb-cloud,.voice-orb-aura,.voice-orb img,.voice-state-pip { animation-duration:.01ms!important; animation-iteration-count:1!important; }
+  #voiceDialog .voice-scene::before,#voiceDialog .voice-scene::after,#voiceDialog .voice-orb,#voiceDialog .voice-orb::before,#voiceDialog .voice-orb::after,#voiceDialog .voice-orb-cloud,#voiceDialog .voice-orb-aura,#voiceDialog .voice-orb img,#voiceDialog .voice-state-pip { animation-duration:.01ms; animation-iteration-count:1; }
 }
 
 /* Voice picker */
