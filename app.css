@@ -97,6 +97,19 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .bubble p:last-child { margin-bottom: 0; }
 .bubble img.generated { display: block; max-width: min(100%, 600px); max-height: 65vh; margin-top: 12px; border-radius: 12px; }
 .typing { color: var(--muted); font-size: 13px; }
+.memory-panel { margin: 0 0 10px; padding: 0 12px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--surface) 94%, transparent); }
+.memory-panel summary { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; color: var(--muted-strong); font-size: 11px; font-weight: 650; list-style: none; }
+.memory-panel summary::-webkit-details-marker { display: none; }
+.memory-panel summary::after { content: "⌄"; color: var(--cyan); }
+.memory-panel[open] summary::after { content: "⌃"; }
+#memoryCount { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 450; }
+.memory-panel p { margin: 0 0 10px; color: var(--muted); font-size: 11px; }
+.memory-panel ul { display: grid; gap: 6px; max-height: 120px; overflow: auto; margin: 0 0 10px; padding: 0; list-style: none; }
+.memory-panel li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; border-radius: 10px; background: var(--surface-raised); color: var(--text); font-size: 11px; }
+.memory-remove { width: 28px; height: 28px; flex: 0 0 28px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 18px; }
+.memory-remove:hover { background: var(--surface); color: var(--danger); }
+#memoryForm { display: flex; gap: 8px; padding-bottom: 10px; }
+#memoryInput { min-width: 0; width: 100%; height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-input); color: var(--text); font: inherit; font-size: 11px; }
 .composer-wrap { position: sticky; bottom: 0; padding: 16px 0 max(14px, env(safe-area-inset-bottom)); background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg) 26%); }
 .composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 24px; background: var(--composer); box-shadow: var(--shadow); }
 .composer:focus-within { border-color: color-mix(in srgb, var(--cyan) 60%, var(--line)); }
@@ -178,3 +191,4 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto; animation-duration: .01ms; animation-iteration-count: 1; }
 }
+
