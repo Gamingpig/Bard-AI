@@ -266,7 +266,7 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
   .voice-controls { padding-top:6px; }
 }
 @media(prefers-reduced-motion:reduce) {
-  .voice-scene::before,.voice-scene::after,.voice-orb,.voice-orb::before,.voice-orb-cloud,.voice-orb-aura,.voice-state-pip { animation:none !important; }
+  .voice-scene::before,.voice-scene::after,.voice-orb,.voice-orb::before,.voice-orb-cloud,.voice-orb-aura,.voice-state-pip { animation-duration:.01ms; animation-iteration-count:1; }
 }
 
 .voice-button.listening { border-color:var(--cyan); background:color-mix(in srgb,var(--cyan) 14%,var(--surface)); color:var(--text); box-shadow:0 0 20px color-mix(in srgb,var(--cyan) 24%,transparent); }
