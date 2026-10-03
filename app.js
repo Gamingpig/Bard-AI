@@ -746,20 +746,23 @@ function updateVoicePickerTrigger() {
 }
 let voicePreviewRun = 0;
 let voicePreviewAudio = null;
+let voicePreviewContext = null;
 function stopVoicePreview() {
   voicePreviewRun += 1;
-  if (voicePreviewAudio) {
-    voicePreviewAudio.audio.pause();
-    voicePreviewAudio.audio.currentTime = 0;
-    URL.revokeObjectURL(voicePreviewAudio.url);
-    voicePreviewAudio = null;
+  if (voicePreviewAudio?.source) {
+    try { voicePreviewAudio.source.stop(); } catch {}
+  }
+  voicePreviewAudio = null;
+  if (voicePreviewContext) {
+    voicePreviewContext.close().catch(() => {});
+    voicePreviewContext = null;
   }
 }
 function voiceSampleBlob(sample) {
   const bytes = Uint8Array.from(atob(sample.data), char => char.charCodeAt(0));
   const mimeType = sample.mimeType || 'audio/wav';
   if (/wav/i.test(mimeType)) return new Blob([bytes], { type: mimeType });
-  const rate = Number(mimeType.match(/rate=(\d+)/i)?.[1]) || 24000;
+  const rate = Number(mimeType.match(/rate=(\\d+)/i)?.[1]) || 24000;
   const wav = new ArrayBuffer(44 + bytes.length);
   const view = new DataView(wav);
   const writeText = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
@@ -783,30 +786,36 @@ async function playVoicePreview(name, button) {
   button.textContent = 'Lädt …';
   $('#voicePickerStatus').textContent = `Hörprobe für ${name} wird erstellt …`;
   try {
+    // Unlock audio during the click, before waiting for the network response.
+    voicePreviewContext = new AudioContext({ latencyHint: 'interactive' });
+    await voicePreviewContext.resume();
     let sample = await readVoiceSample(name);
     if (!sample) {
       sample = await requestWorker('/api/voice-preview', { voiceName: name });
       await saveVoiceSample(sample);
     }
     if (run !== voicePreviewRun) return;
-    const url = URL.createObjectURL(voiceSampleBlob(sample));
-    const audio = new Audio(url);
-    voicePreviewAudio = { name, audio, url };
-    audio.onended = () => {
-      if (voicePreviewAudio?.audio !== audio) return;
+    const audioBuffer = await voicePreviewContext.decodeAudioData(await voiceSampleBlob(sample).arrayBuffer());
+    if (run !== voicePreviewRun) return;
+    const source = voicePreviewContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(voicePreviewContext.destination);
+    voicePreviewAudio = { name, source };
+    source.onended = () => {
+      if (voicePreviewAudio?.source !== source) return;
       stopVoicePreview();
       const current = document.querySelector(`[data-preview-voice="${name}"]`);
       if (current) current.textContent = '▶ Anhören';
       $('#voicePickerStatus').textContent = `${name} · Hörprobe beendet`;
     };
-    await audio.play();
+    source.start();
     button.textContent = '■ Stoppen';
     $('#voicePickerStatus').textContent = `${name} · Hörprobe läuft`;
   } catch (error) {
     if (run === voicePreviewRun) $('#voicePickerStatus').textContent = error.message || 'Die Hörprobe ist gerade nicht verfügbar.';
   } finally {
-    if (run === voicePreviewRun) button.disabled = false;
-    if (run === voicePreviewRun && voicePreviewAudio?.name !== name) button.textContent = '▶ Anhören';
+    button.disabled = false;
+    if (run !== voicePreviewRun || voicePreviewAudio?.name !== name) button.textContent = '▶ Anhören';
   }
 }
 function renderVoicePicker() {
