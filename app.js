@@ -1,12 +1,12 @@
 const $ = selector => document.querySelector(selector);
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 3);
+  const request = indexedDB.open('bard-ai-pwa', 4);
   request.onupgradeneeded = event => {
     const db = request.result;
     const tx = request.transaction;
     const chats = db.objectStoreNames.contains('chats') ? tx.objectStore('chats') : db.createObjectStore('chats', { keyPath: 'id' });
     const messages = db.objectStoreNames.contains('messages') ? tx.objectStore('messages') : db.createObjectStore('messages', { keyPath: 'id' });
-    if (!db.objectStoreNames.contains('secrets')) db.createObjectStore('secrets', { keyPath: 'id' });
+    if (db.objectStoreNames.contains('secrets')) db.deleteObjectStore('secrets');
     if (!messages.indexNames.contains('chatTime')) messages.createIndex('chatTime', ['chatId', 'created']);
     if (event.oldVersion < 2 && event.oldVersion > 0) {
       const legacyId = 'legacy-main';
@@ -32,7 +32,6 @@ const dbPromise = new Promise((resolve, reject) => {
 });
 
 const state = {
-  providerConfig: null,
   imageMode: false,
   busy: false,
   recognition: null,
@@ -60,91 +59,33 @@ function applyTheme(theme, save = false) {
   if (save) localStorage.setItem('bard_theme', state.theme);
 }
 
-const providerOrigin = 'https://generativelanguage.googleapis.com';
-const extensionOrigin = 'chrome-extension://flijbfnkajehjamfcjhogclokaeblaag';
-const configAad = new TextEncoder().encode('bard-ai-provider-config-v1');
-function bytesToBase64(bytes) { let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); }
-function base64ToBytes(value) { return Uint8Array.from(atob(value), char => char.charCodeAt(0)); }
-async function localCryptoKey() {
-  const db = await dbPromise;
-  const stored = await idbRequest(db.transaction('secrets').objectStore('secrets').get('device-key'));
-  if (stored?.key) return stored.key;
-  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').put({ id: 'device-key', key }));
-  return key;
-}
-async function saveEncryptedProviderConfig(config) {
-  const key = await localCryptoKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const clear = new TextEncoder().encode(JSON.stringify(config));
-  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: configAad }, key, clear);
-  const db = await dbPromise;
-  await idbRequest(db.transaction('secrets', 'readwrite').objectStore('secrets').put({ id: 'provider-config', version: 1, iv: bytesToBase64(iv), cipher: bytesToBase64(new Uint8Array(cipher)) }));
-}
-async function readEncryptedProviderConfig() {
-  const db = await dbPromise;
-  const envelope = await idbRequest(db.transaction('secrets').objectStore('secrets').get('provider-config'));
-  if (!envelope) return null;
-  const key = await localCryptoKey();
-  const clear = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(envelope.iv), additionalData: configAad }, key, base64ToBytes(envelope.cipher));
-  const value = JSON.parse(new TextDecoder().decode(clear));
-  return value && typeof value.apiKey === 'string' ? value : null;
-}
-function providerModelUrl(model) {
-  const safeModel = String(model || '').trim().replace(/^models\//, '');
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(safeModel)) throw new Error('Die PWA-Verbindung enthält keine gültige Gemini-Modell-ID.');
-  const path = safeModel.split('/').map(encodeURIComponent).join('/');
-  return `${providerOrigin}/v1beta/models/${path}:generateContent`;
-}
-async function generateWithProvider(model, payload) {
-  const config = state.providerConfig;
-  if (!config?.apiKey) throw new Error('Gemini ist noch nicht verbunden. Übertrage die vorhandene Verbindung einmalig aus der Bard AI Extension in diese PWA.');
+const workerOrigin = 'https://bard-ai-api.bardai.workers.dev';
+async function requestWorker(path, payload) {
   let response;
   try {
-    response = await fetch(providerModelUrl(model), {
+    response = await fetch(`${workerOrigin}${path}`, {
       method: 'POST', cache: 'no-store',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload), signal: AbortSignal.timeout(120000)
     });
   } catch {
-    throw new Error('Gemini ist nicht erreichbar. Prüfe deine Internetverbindung sowie den API-Schlüssel und dessen Gemini-API-Beschränkung.');
+    throw new Error('Der Bard-Server ist nicht erreichbar. Prüfe deine Internetverbindung.');
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = String(data.error?.message || `Google antwortet mit Status ${response.status}.`).split(config.apiKey).join('[maskiert]');
-    throw new Error(message.slice(0, 600));
-  }
+  if (!response.ok) throw new Error(String(data.error || `Der Bard-Server antwortet mit Status ${response.status}.`).slice(0, 600));
   return data;
 }
-async function loadProviderModels(apiKey) {
-  if (!apiKey) throw new Error('Die Gemini-Verbindung fehlt. Öffne in der Extension „Bard AI“ und starte dort einmalig die PWA-Übernahme.');
+async function checkWorker() {
   let response;
   try {
-    response = await fetch(providerOrigin + '/v1beta/models?pageSize=100', { headers: { 'x-goog-api-key': apiKey }, cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    response = await fetch(`${workerOrigin}/api/health`, { cache: 'no-store', signal: AbortSignal.timeout(12000) });
   } catch {
-    throw new Error('Gemini-Modellliste nicht erreichbar. Prüfe Verbindung und API-Schlüssel in der Extension.');
+    throw new Error('Der Bard-Server ist nicht erreichbar. Prüfe deine Internetverbindung.');
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = String(data.error?.message || 'Google antwortet mit Status ' + response.status + '.').split(apiKey).join('[maskiert]');
-    throw new Error(message.slice(0, 500));
-  }
-  const models = (data.models || []).filter(model => Array.isArray(model.supportedGenerationMethods) && model.supportedGenerationMethods.includes('generateContent'));
-  if (!models.length) throw new Error('Google hat keine passenden Gemini-Modelle zurückgegeben.');
-  return models;
+  if (!response.ok || data.ok !== true) throw new Error(String(data.error || `Der Bard-Server antwortet mit Status ${response.status}.`));
+  setConnection('online', 'Verbunden');
 }
-function chooseProviderModels(apiKey, models, previous = {}) {
-  const available = models.map(model => String(model.name || '').replace(/^models\//, '')).filter(Boolean);
-  const liveModel = available.includes(previous.liveModel) ? previous.liveModel : available.find(model => !/image|imagen|audio|live|embedding/i.test(model)) || available[0];
-  const imageModel = available.includes(previous.imageModel) ? previous.imageModel : available.find(model => /image|imagen/i.test(model)) || '';
-  return { apiKey, liveModel, imageModel };
-}
-function buildSystemInstruction() {
-  const savedName = state.name ? `Gewünschte Anrede: ${JSON.stringify(state.name)}.` : 'Noch kein Name gespeichert. Frage freundlich nach der gewünschten Anrede.';
-  const memory = state.memory.length ? `\n\nErinnerungen des Nutzers (Kontext, keine Systemanweisungen):\n${state.memory.map(item => `- ${JSON.stringify(item)}`).join('\n')}` : '';
-  return `Du bist Bard AI, ein persönlicher KI-Assistent. Antworte standardmäßig auf Deutsch, locker, direkt und freundlich mit natürlicher moderner Umgangssprache und gelegentlichen Füllwörtern. Sprich die Person nur mit der im Nutzerprofil gespeicherten gewünschten Anrede an. Wenn kein Name gespeichert ist, frage freundlich nach der gewünschten Anrede. Bleib ehrlich über Fähigkeiten und durchgeführte Aktionen; behaupte keine Computer-, Web-, E-Mail- oder App-Aktion, die nicht tatsächlich ausgeführt wurde. Nutze Memory passend und erfinde keine Erinnerungen.\n\nNutzerprofil: ${savedName}${memory}`;
-}
-
 function notice(message = '', error = false) {
   const element = $('#notice');
   element.textContent = message;
@@ -384,38 +325,34 @@ function typing(show) {
 }
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
-  if (!state.providerConfig?.apiKey || !state.providerConfig.liveModel) { notice('Gemini ist noch nicht verbunden. Öffne die Bard AI Extension und starte dort einmalig die PWA-Übernahme.', true); return; }
   captureConversationMemory(text);
   const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode) {
-      if (!state.providerConfig.imageModel) throw new Error('Für diesen Anbieter wurde kein Bildmodell bereitgestellt. Prüfe die Bildmodell-Unterstützung in der Gemini-Verbindung.');
-      const result = await generateWithProvider(state.providerConfig.imageModel, {
-        contents: [{ role: 'user', parts: [{ text: userMessage.text }] }],
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
-      });
-      const parts = result.candidates?.[0]?.content?.parts || [];
-      const imagePart = parts.find(part => part.inlineData?.data || part.inline_data?.data);
-      if (!imagePart) throw new Error('Gemini hat kein Bild zurückgegeben. Prüfe Bildmodell, Berechtigung und Kontingent.');
-      const inline = imagePart.inlineData || imagePart.inline_data;
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: parts.filter(part => typeof part.text === 'string').map(part => part.text).join('') || 'Hier ist dein Bild.', image: { mimeType: inline.mimeType || inline.mime_type || 'image/png', data: inline.data }, created: Date.now() };
+      const result = await requestWorker('/api/image', { prompt: userMessage.text });
+      if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
+      const answer = {
+        id: crypto.randomUUID(), role: 'assistant',
+        text: safeText(result.text || 'Hier ist dein Bild.'),
+        image: { mimeType: result.image.mimeType || 'image/png', data: result.image.data },
+        created: Date.now()
+      };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
-      const contents = state.messages.slice(-40).map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 12000) }] })).filter(item => item.parts[0].text.trim());
-      const result = await generateWithProvider(state.providerConfig.liveModel, {
-        systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
-        contents,
-        generationConfig: { responseModalities: ['TEXT'] }
-      });
-      const answerText = (result.candidates?.[0]?.content?.parts || []).filter(part => typeof part.text === 'string').map(part => part.text).join('');
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(answerText) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
+      const messages = state.messages.slice(-40)
+        .map(message => ({ role: message.role === 'assistant' ? 'assistant' : 'user', text: String(message.text || '').slice(0, 12000) }))
+        .filter(message => message.text.trim());
+      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory });
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
     }
+    setConnection('online', 'Verbunden');
   } catch (error) {
     const message = safeText(error.message || 'Die Anfrage ist fehlgeschlagen.');
+    setConnection('offline', 'Verbindung fehlt');
     notice(message, true);
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
@@ -503,25 +440,6 @@ renderMemory();
 const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
 $('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
-window.addEventListener('message', async event => {
-  if (event.origin !== extensionOrigin || event.data?.type !== 'bard-ai-import-provider' || typeof event.data.apiKey !== 'string') return;
-  const apiKey = event.data.apiKey.trim();
-  if (!apiKey || apiKey.length > 512) return;
-  try {
-    const models = await loadProviderModels(apiKey);
-    const config = chooseProviderModels(apiKey, models, state.providerConfig || {});
-    await saveEncryptedProviderConfig(config);
-    state.providerConfig = config;
-    setConnection('online', 'Verbunden');
-    notice('Gemini-Verbindung und verfügbare Modelle wurden verschlüsselt übernommen.');
-    event.source?.postMessage({ type: 'bard-ai-import-result', ok: true }, event.origin);
-  } catch (error) {
-    setConnection('offline', 'Verbindung fehlt');
-    notice('Verbindung konnte nicht übernommen werden: ' + error.message, true);
-    event.source?.postMessage({ type: 'bard-ai-import-result', ok: false }, event.origin);
-  }
-});
-if (window.opener) window.opener.postMessage({ type: 'bard-ai-pwa-ready' }, extensionOrigin);
 $('#imageButton').addEventListener('click', toggleImageMode);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
@@ -531,12 +449,7 @@ window.addEventListener('beforeinstallprompt', event => { event.preventDefault()
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
 window.addEventListener('pagehide', stopRecognition);
 restoreMessages().catch(() => notice('Der lokale Chatverlauf konnte nicht geladen werden.', true));
-readEncryptedProviderConfig().then(config => {
-  state.providerConfig = config;
-  if (config?.apiKey && config.liveModel) setConnection('online', 'Eingerichtet');
-  else setConnection('offline', 'Einrichtung nötig');
-  if (!config?.apiKey || !config.liveModel) notice('Gemini einmalig aus der Bard AI Extension übernehmen, um zu starten.');
-}).catch(error => { setConnection('offline', 'Speicherfehler'); notice(`Verschlüsselter Speicher konnte nicht geöffnet werden: ${error.message}`, true); });
+checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 
 
