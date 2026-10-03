@@ -800,7 +800,7 @@ function voiceFailure(message) {
   voice.socket = null;
   const detail = message || 'Der Live-Sprachkanal konnte nicht gestartet werden.';
   const userMessage = isProviderQuotaError({ message: detail })
-    ? 'Google meldet, dass das Gemini-Live-Kontingent des API-Projekts erschöpft ist. Prüfe das Projekt des PWA-Worker-Schlüssels unter aistudio.google.com/rate-limit; bei verbrauchter Modellquote hilft nur der Google-Reset oder eine höhere Freigabe.'
+    ? 'Das Sprachkontingent ist momentan ausgeschöpft. Warte auf die Freigabe oder prüfe den Zugang in den erweiterten Einstellungen.'
     : detail.slice(0, 360);
   voiceState('error', 'Verbindung unterbrochen', userMessage);
   $('#voiceRetry').classList.remove('hidden');
@@ -934,12 +934,12 @@ async function startLiveVoice(keepDialog = false) {
       const fallbackModel = 'models/gemini-3.1-flash-live-preview';
       const primaryModel = String(result.model).replace(/^models\//, '');
       if (!isProviderQuotaError(primaryError) || primaryModel === fallbackModel.replace(/^models\//, '')) throw primaryError;
-      voiceState('connecting', 'Wechsle Live-Modell', 'Google meldet eine Modell-Quota. Ich versuche einmal die dokumentierte Live-Kompatibilitätsroute.');
+      voiceState('connecting', 'Wechsle Sprachroute', 'Die Standardroute ist gerade ausgelastet. Ich versuche einmal eine kompatible Alternative.');
       const fallback = await requestWorker('/api/live-token', tokenRequest);
       if (!fallback.token || !fallback.config) throw primaryError;
       try {
         await openLiveSocket(fallback, configureVoiceSession(fallback), fallbackModel);
-        notice('Das Standard-Live-Modell hatte keine freie Quota. Verbunden über die Live-Kompatibilitätsroute.', false);
+        notice('Bard AI nutzt vorübergehend eine alternative Sprachroute.', false);
       } catch (fallbackError) {
         throw new Error(`${primaryError.message || 'Standard-Live-Modell nicht verfügbar.'} ${fallbackError.message || 'Auch die Live-Kompatibilitätsroute konnte nicht verbinden.'}`);
       }
@@ -1150,6 +1150,7 @@ window.addEventListener('pagehide', () => stopLiveVoice(false));
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
 
 
 
