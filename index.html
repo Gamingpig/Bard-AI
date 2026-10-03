@@ -15,9 +15,8 @@
 <body>
   <div class="shell">
     <header class="topbar">
-      <button class="icon-button" id="menuButton" aria-label="Menü" title="Menü"><span class="menu-lines"></span></button>
       <a class="brand" href="./" aria-label="Bard AI Startseite"><img src="icons/bard.svg" alt=""><span>Bard AI</span></a>
-      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="chats-button" id="chatsButton" aria-haspopup="dialog">Chats <span id="chatCount">0</span></button><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button><button class="icon-button" id="adminButton" aria-label="Einstellungen öffnen" title="Einstellungen öffnen">⚙</button></div>
+      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="chats-button" id="chatsButton" aria-haspopup="dialog">Chats <span id="chatCount">0</span></button><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button></div>
     </header>
 
     <main>
@@ -55,24 +54,7 @@
     <header class="chat-dialog-head"><div><span class="eyebrow">DEINE BIBLIOTHEK</span><h2 id="chatDialogTitle">Deine Chats</h2></div><button class="icon-button" id="closeChatDialog" aria-label="Chats schließen">×</button></header>
     <div class="chat-dialog-body"><button id="newChatButton" class="primary-button new-chat-button">＋ Neuer Chat</button><div id="chatList" class="chat-list" aria-live="polite"></div><p class="chat-library-note">Jeder Chat hat einen eigenen Verlauf. Memory und dein Name bleiben chatübergreifend erhalten.</p></div>
   </dialog>
-
-  <dialog id="adminDialog" class="admin-dialog">
-    <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · AUF DIESEM GERÄT</span><h2>Gemini verbinden</h2><p>Kein Backend und kein Admin-Passwort nötig. Deine Provider-Daten werden lokal verschlüsselt gespeichert.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
-    <div class="dialog-body">
-      <section class="setup-card provider-settings">
-        <div class="setup-label"><span class="step-number">1</span><label for="providerKey">Google Gemini API-Schlüssel</label><small id="keyStatus">Noch nicht eingerichtet</small></div>
-        <div class="inline-field"><input id="providerKey" type="password" autocomplete="off" spellcheck="false" placeholder="Schlüssel hier einfügen"><button id="revealProviderKey" class="quiet-button" type="button">Anzeigen</button></div>
-        <button id="loadModels" class="quiet-button model-discovery" type="button">Modellliste von Google laden</button>
-        <datalist id="providerModels"></datalist>
-        <label for="liveModel">Chat-Modell-ID</label><input id="liveModel" list="providerModels" autocomplete="off" spellcheck="false" placeholder="Modell aus der Liste wählen">
-        <label for="imageModel">Bildmodell-ID <span>optional</span></label><input id="imageModel" list="providerModels" autocomplete="off" spellcheck="false" placeholder="Bildmodell aus der Liste wählen">
-        <div class="provider-actions"><button id="saveProviderSettings" class="primary-button">Verschlüsselt speichern</button><button id="testProvider" class="quiet-button">Verbindung testen</button><button id="clearProvider" class="quiet-button danger-button">Daten löschen</button></div>
-        <p id="providerStatus" class="status-text">Noch nicht eingerichtet.</p>
-        <p class="security-note">Der Schlüssel wird mit AES-GCM auf diesem Gerät gespeichert. Zum Senden wird er im Browser entschlüsselt und direkt an Google Gemini übermittelt. Beschränke den Schlüssel in AI Studio auf die Gemini API.</p>
-      </section>
-    </div>
-  </dialog>
-  <script src="app.js" type="module"></script>
+<script src="app.js" type="module"></script>
 </body>
 </html>
 
