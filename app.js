@@ -386,6 +386,7 @@ function renderSearchSuggestion(parent, markup, live = false) {
   frame.referrerPolicy = 'no-referrer'; frame.loading = 'lazy'; frame.srcdoc = markup;
   if (live) frame.classList.add('live');
   parent.append(frame);
+  if (live) parent.scrollTo({ top: parent.scrollHeight, behavior: 'smooth' });
 }
 function renderSources(parent, sources) {
   const safeSources = (Array.isArray(sources) ? sources : []).filter(source => {
