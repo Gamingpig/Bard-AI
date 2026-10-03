@@ -319,3 +319,9 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .generated-preview-source summary { padding: 11px 14px; color: var(--muted-strong); font-size: 11px; cursor: pointer; }
 .generated-preview-source pre { max-height: 320px; overflow: auto; margin: 0; padding: 14px; background: var(--surface-input); color: var(--muted-strong); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media(max-width:600px) { .generated-preview-frame { height: 42vh; min-height: 220px; } .generated-preview-heading { min-height: 40px; } }
+
+.voice-settings-button { display:flex; min-height:36px; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--line); border-radius:20px; background:var(--surface); color:var(--muted-strong); font-size:11px; transition:border-color .18s,background .18s,color .18s; }
+.voice-settings-button:hover { border-color:var(--cyan); background:color-mix(in srgb,var(--cyan) 10%,var(--surface)); color:var(--text); }
+.voice-settings-button [aria-hidden] { color:var(--cyan); font-size:17px; }
+.voice-settings-button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+@media(max-width:600px) { .voice-settings-button { min-height:36px; padding:7px 9px; font-size:10px; } .composer-tools { flex-wrap:wrap; } .composer-tools > span { min-width:100%; order:3; text-align:left; } }
