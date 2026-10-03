@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
+      - 'index.html'
+      - 'app.css'
+      - 'app.js'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'icons/bard.svg'
+      - 'icons/bard-512.png'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -30,10 +36,16 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Stage static app files
+        run: |
+          mkdir -p _site/icons
+          cp index.html app.css app.js manifest.webmanifest sw.js _site/
+          cp icons/bard.svg icons/bard-512.png _site/icons/
+          touch _site/.nojekyll
       - name: Upload static app
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
       - name: Publish
         id: deployment
         uses: actions/deploy-pages@v4

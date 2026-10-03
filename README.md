@@ -1,10 +1,10 @@
 # Bard AI
 
-Bard AI is a mobile-ready installable PWA published from `docs/`. It includes a local conversation history, remembered display name, voice input/output, image requests, and a password-protected provider settings dialog.
+Bard AI is a mobile-ready installable PWA with its entry page and linked assets in the repository root. It includes a local conversation history, remembered display name, voice input/output, image requests, and a password-protected provider settings dialog.
 
 ## Publish
 
-GitHub Actions publishes the contents of `docs/` to GitHub Pages on updates to `main`. The app URL is `https://gamingpig.github.io/Bard-AI/`. If Pages has not been enabled for the repository yet, open **Settings → Pages** and choose **GitHub Actions** as the build source.
+GitHub Actions stages only the PWA entry page, styles, scripts, manifest, service worker, and Bard icons from the repository root, then publishes that app to GitHub Pages on updates to `main`. The app URL is `https://gamingpig.github.io/Bard-AI/`. If Pages has not been enabled for the repository yet, open **Settings → Pages** and choose **GitHub Actions** as the build source.
 
 The PWA needs a separately deployed Cloudflare Worker before chat and image generation can connect. Follow [worker/README.md](worker/README.md). API keys, the admin password, provider endpoint, model IDs, and encryption material are not embedded in the public frontend. The browser remembers the Worker URL and display name locally; chat history is limited to the latest 80 messages and 8 retained images per device.
 

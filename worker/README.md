@@ -41,4 +41,3 @@ The Worker allows browser requests only from `https://gamingpig.github.io`, appl
 Run `npm run check` to parse the Worker source. `npm run dev` starts the local Wrangler preview after the KV binding and secrets have been configured for local development.
 
 Provider availability, pricing, model limits, and image-generation quotas are controlled by the selected provider. This project cannot promise unlimited or quota-free generation.
-
