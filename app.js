@@ -1,4 +1,6 @@
 const $ = selector => document.querySelector(selector);
+function readStored(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function writeStored(key, value) { try { localStorage.setItem(key, value); return true; } catch { return false; } }
 const LIVE_VOICES = [
   { name: 'Zephyr', style: 'Hell' },
   { name: 'Puck', style: 'Lebhaft' },
@@ -33,14 +35,14 @@ const LIVE_VOICES = [
 ];
 const LIVE_VOICE_NAMES = new Set(LIVE_VOICES.map(voice => voice.name));
 const dbPromise = new Promise((resolve, reject) => {
-  const request = indexedDB.open('bard-ai-pwa', 6);
+  const request = indexedDB.open('bard-ai-pwa', 7);
   request.onupgradeneeded = event => {
     const db = request.result;
     const tx = request.transaction;
     const chats = db.objectStoreNames.contains('chats') ? tx.objectStore('chats') : db.createObjectStore('chats', { keyPath: 'id' });
     const messages = db.objectStoreNames.contains('messages') ? tx.objectStore('messages') : db.createObjectStore('messages', { keyPath: 'id' });
     if (!db.objectStoreNames.contains('voiceSamples')) db.createObjectStore('voiceSamples', { keyPath: 'voiceName' });
-    if (db.objectStoreNames.contains('secrets')) db.deleteObjectStore('secrets');
+    if (!db.objectStoreNames.contains('profile')) db.createObjectStore('profile', { keyPath: 'key' });
     if (!messages.indexNames.contains('chatTime')) messages.createIndex('chatTime', ['chatId', 'created']);
     if (event.oldVersion < 2 && event.oldVersion > 0) {
       const legacyId = 'legacy-main';
@@ -68,18 +70,19 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: LIVE_VOICE_NAMES.has(localStorage.getItem('bard_live_voice')) ? localStorage.getItem('bard_live_voice') : '' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
   recognitionLastActivity: 0,
   restartDelay: 350,
   installPrompt: null,
-  name: localStorage.getItem('bard_user_name') || '',
-  memory: (() => { try { const value = JSON.parse(localStorage.getItem('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { return []; } })(),
+  name: readStored('bard_user_name') || '',
+  memory: (() => { try { const value = JSON.parse(readStored('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { return []; } })(),
+  recentContext: (() => { try { const value = JSON.parse(readStored('bard_recent_context') || '[]'); return Array.isArray(value) ? value.filter(item => item && typeof item.text === 'string').slice(-16) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: [],
-  chatId: localStorage.getItem('bard_active_chat') || ''
+  chatId: readStored('bard_active_chat') || ''
 };
 
 function applyTheme(theme, save = false) {
@@ -132,14 +135,29 @@ function setConnection(value, label) {
   element.lastChild.textContent = ` ${label}`;
 }
 function safeText(text) { return String(text || '').replace(/\u0000/g, '').slice(0, 12000); }
+function buildPreviousContext() {
+  return state.recentContext.filter(item => item.chatId !== state.chatId).slice(-8).map(item => ({ role: item.role, text: item.text.slice(0, 1000) }));
+}
+function buildLiveContext() {
+  const previous = buildPreviousContext();
+  const active = state.messages.slice(-10).map(item => ({ role: item.role, text: String(item.text || '').slice(0, 1000) })).filter(item => item.text.trim());
+  return [...previous, ...active].slice(-12);
+}
+function mergeRecentContext(rows, chatId) {
+  const previous = state.recentContext.filter(item => item.chatId !== chatId);
+  const current = rows.slice(-8).filter(item => item.text && item.text.trim()).map(item => ({ id: item.id, chatId, role: item.role, text: String(item.text).slice(0, 1000), created: Number(item.created) || Date.now() }));
+  state.recentContext = [...previous, ...current].sort((a, b) => a.created - b.created).slice(-16);
+  writeStored('bard_recent_context', JSON.stringify(state.recentContext));
+}
 function persistMessages() {
   return dbPromise.then(db => new Promise((resolve, reject) => {
     if (!state.chatId) { reject(new Error('Kein aktiver Chat ausgewählt.')); return; }
     const tx = db.transaction(['messages', 'chats'], 'readwrite');
     const store = tx.objectStore('messages');
+    const chatId = state.chatId;
     const rows = state.messages.slice(-80);
     const keep = new Set(rows.map(message => message.id));
-    const range = IDBKeyRange.bound([state.chatId, 0], [state.chatId, Number.MAX_SAFE_INTEGER]);
+    const range = IDBKeyRange.bound([chatId, 0], [chatId, Number.MAX_SAFE_INTEGER]);
     const cursorRequest = store.index('chatTime').openCursor(range);
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result;
@@ -152,7 +170,7 @@ function persistMessages() {
         store.put(row);
       }
       const chats = tx.objectStore('chats');
-      const chatRequest = chats.get(state.chatId);
+      const chatRequest = chats.get(chatId);
       chatRequest.onsuccess = () => {
         const chat = chatRequest.result;
         if (!chat) return;
@@ -161,12 +179,49 @@ function persistMessages() {
         chat.updated = Date.now(); chats.put(chat);
       };
     };
-    tx.oncomplete = resolve;
+    tx.oncomplete = () => { mergeRecentContext(rows, chatId); resolve(); };
     tx.onerror = () => reject(tx.error || new Error('Der Chat konnte nicht gespeichert werden.'));
     tx.onabort = () => reject(tx.error || new Error('Der Chat konnte nicht gespeichert werden.'));
   }));
 }
 function idbRequest(request) { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
+function persistProfile() {
+  const name = state.name.trim().slice(0, 60);
+  const memory = state.memory.slice(-12);
+  writeStored('bard_user_name', name);
+  writeStored('bard_memory', JSON.stringify(memory));
+  const record = { key: 'user', name, memory, updated: Date.now() };
+  return dbPromise.then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction('profile', 'readwrite');
+    tx.objectStore('profile').put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = tx.onabort = () => reject(tx.error || new Error('Profil konnte nicht gespeichert werden.'));
+  }));
+}
+async function restoreProfile() {
+  const db = await dbPromise;
+  const backup = await idbRequest(db.transaction('profile').objectStore('profile').get('user'));
+  const storedName = readStored('bard_user_name');
+  const storedMemory = readStored('bard_memory');
+  if (storedName !== null) state.name = storedName.trim().slice(0, 60);
+  else if (backup?.name) state.name = String(backup.name).trim().slice(0, 60);
+  if (storedMemory !== null) {
+    try { const value = JSON.parse(storedMemory); state.memory = Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { state.memory = []; }
+  } else if (Array.isArray(backup?.memory)) state.memory = backup.memory.filter(item => typeof item === 'string').slice(-12);
+  writeStored('bard_user_name', state.name);
+  writeStored('bard_memory', JSON.stringify(state.memory));
+  $('#userName').value = state.name;
+  if (state.name) { $('#nameForm').classList.add('hidden'); $('#welcome').classList.remove('needs-name'); }
+  else { $('#nameForm').classList.remove('hidden'); $('#welcome').classList.add('needs-name'); }
+  renderMemory();
+  if (storedName === null || storedMemory === null) await persistProfile();
+}
+async function restoreRecentContext(db) {
+  const rows = await idbRequest(db.transaction('messages').objectStore('messages').getAll());
+  if (!rows.length) return;
+  state.recentContext = rows.filter(item => item.text && item.text.trim()).sort((a, b) => a.created - b.created).slice(-16).map(item => ({ id: item.id, chatId: item.chatId, role: item.role, text: String(item.text).slice(0, 1000), created: Number(item.created) || Date.now() }));
+  writeStored('bard_recent_context', JSON.stringify(state.recentContext));
+}
 function readVoiceSample(name) {
   return dbPromise.then(db => idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').get(name)));
 }
@@ -202,6 +257,7 @@ function resetConversationView() {
 }
 async function restoreMessages() {
   const db = await dbPromise;
+  await restoreRecentContext(db);
   let chats = await idbRequest(db.transaction('chats').objectStore('chats').getAll());
   if (!chats.length) {
     const now = Date.now();
@@ -218,6 +274,7 @@ async function restoreMessages() {
   $('#currentChatTitle').textContent = chat.title || 'Neues Gespräch';
   for (const item of state.messages) renderMessage(item, false);
   if (state.messages.length) $('#welcome').classList.add('compact');
+  if (!state.name) { $('#welcome').classList.add('needs-name'); $('#nameForm').classList.remove('hidden'); }
   await renderChatLibrary();
 }
 async function renderChatLibrary() {
@@ -354,13 +411,16 @@ function renderMessage(item, scroll = true) {
   return row;
 }
 function saveUserName(value) {
-  state.name = value.trim().replace(/\s+/g, ' ').slice(0, 60);
-  if (state.name) localStorage.setItem('bard_user_name', state.name);
-  else localStorage.removeItem('bard_user_name');
+  const name = String(value || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!name) return false;
+  state.name = name;
+  void persistProfile().catch(() => notice('Der Name bleibt im aktuellen Gespräch erhalten, konnte aber nicht dauerhaft gespeichert werden.', true));
   $('#userName').value = state.name;
   renderMemory();
   $('#nameForm').classList.add('hidden');
+  $('#welcome').classList.remove('needs-name');
   renderMessages();
+  return true;
 }
 function renderMemory() {
   const list = $('#memoryList');
@@ -373,14 +433,14 @@ function renderMemory() {
     const profile = document.createElement('li');
     const label = document.createElement('span'); label.textContent = `Gewünschte Anrede: ${state.name}`;
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'memory-remove'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Gespeicherten Namen entfernen');
-    remove.addEventListener('click', () => { state.name = ''; localStorage.removeItem('bard_user_name'); $('#userName').value = ''; $('#nameForm').classList.remove('hidden'); renderMemory(); renderMessages(); });
+    remove.addEventListener('click', () => { state.name = ''; writeStored('bard_user_name', ''); void persistProfile().catch(() => {}); $('#userName').value = ''; $('#nameForm').classList.remove('hidden'); $('#welcome').classList.add('needs-name'); renderMemory(); renderMessages(); });
     profile.append(label, remove); list.append(profile);
   }
   for (const [index, fact] of state.memory.entries()) {
     const item = document.createElement('li');
     const text = document.createElement('span'); text.textContent = fact;
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'memory-remove'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Erinnerung entfernen');
-    remove.addEventListener('click', () => { state.memory.splice(index, 1); localStorage.setItem('bard_memory', JSON.stringify(state.memory)); renderMemory(); });
+    remove.addEventListener('click', () => { state.memory.splice(index, 1); void persistProfile().catch(() => {}); renderMemory(); });
     item.append(text, remove); list.append(item);
   }
 }
@@ -391,28 +451,31 @@ function remember(value) {
   const existing = state.memory.findIndex(item => item.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === key);
   if (existing >= 0) state.memory.splice(existing, 1);
   state.memory = [...state.memory, fact].slice(-12);
-  localStorage.setItem('bard_memory', JSON.stringify(state.memory)); renderMemory();
+  void persistProfile().catch(() => notice('Das Memory konnte nicht dauerhaft gespeichert werden.', true)); renderMemory();
   return true;
 }
 function assistantAskedForName() {
   const previous = [...state.messages].reverse().find(item => item.role === 'assistant');
-  return Boolean(previous && /wie\s+(?:darf|soll|kann)\s+ich\s+dich\s+nennen|wie\s+heißt\s+du|wie\s+lautet\s+dein\s+name|was\s+ist\s+dein\s+name|welchen\s+namen\s+(?:soll|darf)\s+ich\s+(?:dir\s+geben|verwenden)/iu.test(previous.text || ''));
+  return Boolean(previous && /wie\s+(?:darf|soll|kann|möchtest)\s+ich\s+dich\s+nennen|wie\s+heißt\s+du|wie\s+lautet\s+dein\s+name|was\s+ist\s+dein\s+name|welchen\s+namen\s+(?:soll|darf)\s+ich\s+(?:dir\s+geben|verwenden)|wie\s+möchtest\s+du\s+angesprochen\s+werden|darf\s+ich\s+deinen\s+namen\s+wissen/iu.test(previous.text || ''));
 }
 function captureConversationMemory(text) {
-  const normalized = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  const normalized = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
   let changed = false;
-  const name = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bnenn mich|\bdu kannst mich nennen)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
-  if (name?.[1]) { saveUserName(name[1]); changed = true; }
-  else if (!state.name && assistantAskedForName()) {
-    const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39})[.!]?$/iu);
-    const filler = new Set(['ja', 'nein', 'okay', 'ok', 'klar', 'hi', 'hallo', 'hey', 'test', 'bro', 'danke']);
-    if (shortAnswer && !filler.has(shortAnswer[1].toLocaleLowerCase('de'))) {
+  const nameMatch = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bmein vorname ist|\bnenn mich|\bdu kannst mich nennen|\bich bin)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
+  const invalidNames = new Set(['müde','muede','hungrig','durstig','krank','glücklich','gluecklich','traurig','bereit','gerade','ein','eine','am','im','nicht','nur','auch','heute','hier']);
+  if (nameMatch?.[1] && !invalidNames.has(nameMatch[1].toLocaleLowerCase('de')) && nameMatch[1] !== state.name) {
+    saveUserName(nameMatch[1]); changed = true;
+  } else if (!state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden'))) {
+    const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu);
+    const filler = new Set(['ja','nein','okay','ok','klar','hi','hallo','hey','test','bro','danke','ich','du','mich','dich','weiß','weiss']);
+    if (shortAnswer && shortAnswer[1].split(/\s+/).every(part => !filler.has(part.toLocaleLowerCase('de')))) {
       saveUserName(shortAnswer[1]); changed = true;
     }
   }
-  const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte)[\s,:-]+(?:dass\s+)?(.+)/iu);
+  const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte|\bbitte nicht vergessen)[\s,:-]+(?:dass\s+)?(.+)/iu);
   if (explicit?.[1]) changed = remember(explicit[1]) || changed;
-  const stableFact = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich spiele gern|ich mache gern|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+(.+)/iu);
+  const stableFact = normalized.match(/\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich spiele gern|ich mache gern|ich fahre gern|ich fahre gerne|ich gehe gern|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+([^.!?\n]{2,140})/iu);
   if (stableFact?.[1]) changed = remember(stableFact[1] + ' ' + stableFact[2]) || changed;
   return changed;
 }
@@ -443,7 +506,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode) {
-      const result = await requestWorker('/api/image', { prompt: userMessage.text });
+      const result = await requestWorker('/api/image', { prompt: userMessage.text, userName: state.name, memory: state.memory, context: buildPreviousContext() });
       if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
       const answer = {
         id: crypto.randomUUID(), role: 'assistant',
@@ -460,7 +523,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       if (codePreview && messages.length) {
         messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
       }
-      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, codePreview });
+      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, context: buildPreviousContext(), codePreview });
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (state.speakReplies) speak(answer.text);
@@ -614,7 +677,13 @@ function handleVoiceMessage(message) {
   if (!content) return;
   const input = content.inputTranscription?.text || content.input_transcription?.text;
   const output = content.outputTranscription?.text || content.output_transcription?.text;
-  if (input) appendCaption('user', input);
+  if (input) {
+    appendCaption('user', input);
+    if (!state.name && assistantAskedForName()) {
+      const shortName = state.voice.turnUser.trim().match(/^([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu);
+      if (shortName) captureConversationMemory(shortName[1]);
+    }
+  }
   if (output) appendCaption('assistant', output);
   if (content.interrupted) {
     stopVoicePlayback(); voice.pendingTurnComplete = false;
@@ -629,7 +698,7 @@ function handleVoiceMessage(message) {
     }
   }
   if (content.turnComplete || content.turn_complete) {
-    saveVoiceTurn();
+    void saveVoiceTurn().catch(() => notice('Das Sprachgespräch konnte lokal nicht gespeichert werden.', true));
     voice.pendingTurnComplete = true;
     if (!voice.sources.size) {
       voice.pendingTurnComplete = false;
@@ -677,7 +746,7 @@ function voiceFailure(message) {
   $('#voiceRetry').classList.remove('hidden');
   $('#voiceMute').classList.add('hidden');
 }
-function saveVoiceTurn() {
+async function saveVoiceTurn() {
   const voice = state.voice;
   const userText = safeText(voice.turnUser).trim();
   const assistantText = safeText(voice.turnAssistant).trim();
@@ -695,7 +764,7 @@ function saveVoiceTurn() {
   }
   if (userText || assistantText) {
     $('#welcome').classList.add('compact');
-    void persistMessages().catch(() => notice('Das Sprachgespräch konnte lokal nicht gespeichert werden.', true));
+    await persistMessages();
   }
 }
 async function startLiveVoice(keepDialog = false) {
@@ -719,7 +788,7 @@ async function startLiveVoice(keepDialog = false) {
       userName: state.name,
       memory: state.memory,
       voiceName: voice.voiceName,
-      context: state.messages.slice(-12).map(item => ({ role: item.role, text: String(item.text || '').slice(0, 1000) }))
+      context: buildLiveContext()
     });
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
     const liveConfig = { ...result.config };
@@ -823,6 +892,7 @@ function toggleVoiceMute() {
 }
 
 $('#userName').value = state.name;
+if (!LIVE_VOICE_NAMES.has(readStored('bard_live_voice'))) writeStored('bard_live_voice', state.voice.voiceName);
 localStorage.removeItem('bard_backend_url');
 sessionStorage.removeItem('bard_session_token');
 applyTheme(state.theme);
@@ -1070,7 +1140,7 @@ $('#voiceDialog').addEventListener('close', () => { if (state.voice.active) stop
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
 window.addEventListener('pagehide', () => stopLiveVoice(false));
-restoreMessages().catch(() => notice('Der lokale Chatverlauf konnte nicht geladen werden.', true));
+restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 
