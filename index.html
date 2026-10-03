@@ -17,11 +17,11 @@
     <header class="topbar">
       <button class="icon-button" id="menuButton" aria-label="Menü" title="Menü"><span class="menu-lines"></span></button>
       <a class="brand" href="./" aria-label="Bard AI Startseite"><img src="icons/bard.svg" alt=""><span>Bard AI</span></a>
-      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button><button class="icon-button" id="adminButton" aria-label="Einstellungen öffnen" title="Einstellungen öffnen">⚙</button></div>
+      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="chats-button" id="chatsButton" aria-haspopup="dialog">Chats <span id="chatCount">0</span></button><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button><button class="icon-button" id="adminButton" aria-label="Einstellungen öffnen" title="Einstellungen öffnen">⚙</button></div>
     </header>
 
     <main>
-      <section class="conversation" aria-label="Gespräch">
+      <section class="conversation" aria-label="Gespräch"><div class="conversation-heading"><span id="currentChatTitle">Neues Gespräch</span></div>
         <div class="welcome" id="welcome">
           <div class="orb-wrap"><div class="orb-glow"></div><div class="orb"><span class="orb-core"></span><img src="icons/bard.svg" alt="Bard AI"></div><i class="orbit orbit-a"></i><i class="orbit orbit-b"></i></div>
           <p class="eyebrow">DEIN AI ASSISTANT</p>
@@ -50,6 +50,11 @@
       </footer>
     </main>
   </div>
+
+  <dialog id="chatDialog" class="chat-dialog" aria-labelledby="chatDialogTitle">
+    <header class="chat-dialog-head"><div><span class="eyebrow">DEINE BIBLIOTHEK</span><h2 id="chatDialogTitle">Deine Chats</h2></div><button class="icon-button" id="closeChatDialog" aria-label="Chats schließen">×</button></header>
+    <div class="chat-dialog-body"><button id="newChatButton" class="primary-button new-chat-button">＋ Neuer Chat</button><div id="chatList" class="chat-list" aria-live="polite"></div><p class="chat-library-note">Jeder Chat hat einen eigenen Verlauf. Memory und dein Name bleiben chatübergreifend erhalten.</p></div>
+  </dialog>
 
   <dialog id="adminDialog" class="admin-dialog">
     <form method="dialog" class="dialog-head"><div><span class="eyebrow">BARD AI · EINRICHTUNG</span><h2>Verbindung & Einstellungen</h2><p>Diese Adresse brauchst du einmalig. Chats und Bilder funktionieren anschließend ohne Admin-Passwort.</p></div><button class="icon-button" aria-label="Schließen">×</button></form>
