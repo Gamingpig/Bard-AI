@@ -16,9 +16,19 @@ This Cloudflare Worker keeps provider credentials and the admin password out of 
    npx wrangler secret put PROVIDER_API_BASE
    ```
 
+   Generate a different random value for each of the session and encryption secrets, then paste each value only into the Wrangler prompt:
+
+   ```powershell
+   $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+   $bytes = New-Object byte[] 32
+   $rng.GetBytes($bytes)
+   [Convert]::ToBase64String($bytes)
+   $rng.Dispose()
+   ```
+
    - `ADMIN_PASSWORD`: the admin password chosen for this app.
-   - `SESSION_SECRET`: a unique random string with at least 32 bytes of entropy.
-   - `CONFIG_ENCRYPTION_KEY`: 32 random bytes encoded as Base64. Generate it locally with `[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))` and paste the result into the Wrangler prompt. Keep a secure backup: losing it makes the saved encrypted provider configuration unreadable.
+   - `SESSION_SECRET`: the first unique random value.
+   - `CONFIG_ENCRYPTION_KEY`: the second random value, encoding 32 bytes. Keep a secure backup: losing it makes the saved encrypted provider configuration unreadable.
    - `PROVIDER_API_BASE`: the HTTPS origin of the compatible provider API. The Google Gemini API origin is `https://generativelanguage.googleapis.com`.
 
 5. Deploy with `npm run deploy`. Copy the resulting `https://…workers.dev` address into Bard AI’s Admin & Verbindung dialog.
@@ -31,3 +41,4 @@ The Worker allows browser requests only from `https://gamingpig.github.io`, appl
 Run `npm run check` to parse the Worker source. `npm run dev` starts the local Wrangler preview after the KV binding and secrets have been configured for local development.
 
 Provider availability, pricing, model limits, and image-generation quotas are controlled by the selected provider. This project cannot promise unlimited or quota-free generation.
+
