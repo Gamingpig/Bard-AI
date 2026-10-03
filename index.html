@@ -65,52 +65,28 @@
         <div class="voice-orb" aria-hidden="true"><div class="voice-orb-aura"></div><div class="voice-orb-cloud cloud-one"></div><div class="voice-orb-cloud cloud-two"></div><div class="voice-orb-shine"></div><img src="icons/bard.svg" alt=""></div>
         <div class="voice-live-state"><span class="voice-state-pip"></span><span id="voiceStateLabel">Verbindung wird aufgebaut …</span></div>
         <p id="voiceStateHint" class="voice-state-hint">Einen Moment, ich richte den Live-Kanal ein.</p>
+        <button id="voicePickerOpen" class="voice-picker-trigger" type="button"><span>Stimme</span><strong id="voiceSelectedLabel">Standard</strong><span aria-hidden="true">⌄</span></button>
         <div class="voice-captions" aria-live="polite"><p id="voiceUserCaption"></p><p id="voiceAssistantCaption"></p></div>
       </div>
       <footer class="voice-controls">
-        <div class="voice-voice-picker">
-          <label for="voiceSelect">Bard-Stimme</label>
-          <select id="voiceSelect" aria-describedby="voiceVoiceNote">
-          <option value="">Standardstimme</option>
-          <option value="Zephyr">Zephyr · Hell</option>
-          <option value="Puck">Puck · Lebhaft</option>
-          <option value="Charon">Charon · Informativ</option>
-          <option value="Kore">Kore · Bestimmt</option>
-          <option value="Fenrir">Fenrir · Energiegeladen</option>
-          <option value="Leda">Leda · Jugendlich</option>
-          <option value="Orus">Orus · Bestimmt</option>
-          <option value="Aoede">Aoede · Locker</option>
-          <option value="Callirrhoe">Callirrhoe · Entspannt</option>
-          <option value="Autonoe">Autonoe · Hell</option>
-          <option value="Enceladus">Enceladus · Sanft</option>
-          <option value="Iapetus">Iapetus · Klar</option>
-          <option value="Umbriel">Umbriel · Entspannt</option>
-          <option value="Algieba">Algieba · Sanft</option>
-          <option value="Despina">Despina · Sanft</option>
-          <option value="Erinome">Erinome · Klar</option>
-          <option value="Algenib">Algenib · Rau</option>
-          <option value="Rasalgethi">Rasalgethi · Informativ</option>
-          <option value="Laomedeia">Laomedeia · Lebhaft</option>
-          <option value="Achernar">Achernar · Weich</option>
-          <option value="Alnilam">Alnilam · Bestimmt</option>
-          <option value="Schedar">Schedar · Ausgeglichen</option>
-          <option value="Gacrux">Gacrux · Reif</option>
-          <option value="Pulcherrima">Pulcherrima · Ausdrucksstark</option>
-          <option value="Achird">Achird · Freundlich</option>
-          <option value="Zubenelgenubi">Zubenelgenubi · Locker</option>
-          <option value="Vindemiatrix">Vindemiatrix · Sanft</option>
-          <option value="Sadachbia">Sadachbia · Lebendig</option>
-          <option value="Sadaltager">Sadaltager · Wissend</option>
-          <option value="Sulafat">Sulafat · Warm</option>
-          </select>
-          <small id="voiceVoiceNote">Wird beim nächsten Live-Gespräch verwendet.</small>
-        </div>
         <button id="voiceMute" class="voice-control" aria-pressed="false"><span class="control-glyph">⌁</span><span>Mikro stumm</span></button>
         <button id="voiceRetry" class="voice-control voice-retry hidden"><span class="control-glyph">↻</span><span>Nochmal verbinden</span></button>
         <button id="voiceEnd" class="voice-end"><span>■</span> Gespräch beenden</button>
       </footer>
       <p class="voice-footnote">Live-Audio · Dein Mikrofon bleibt nur während dieses Gesprächs aktiv</p>
     </div>
+  </dialog>
+
+  <dialog id="voicePickerDialog" class="voice-picker-dialog" aria-labelledby="voicePickerTitle">
+    <section class="voice-picker-shell">
+      <header class="voice-picker-header">
+        <div><span class="eyebrow">BARD AI LIVE</span><h2 id="voicePickerTitle">Stimme auswählen</h2></div>
+        <button id="voicePickerClose" class="voice-icon-button" type="button" aria-label="Stimmenmenü schließen">×</button>
+      </header>
+      <p class="voice-picker-copy">Hör dir die Gemini-Stimmen an und wähle deinen Favoriten. Hörproben werden einmalig erzeugt und auf diesem Gerät gespeichert.</p>
+      <p id="voicePickerStatus" class="voice-picker-status" aria-live="polite"></p>
+      <div id="voicePickerList" class="voice-picker-list"></div>
+    </section>
   </dialog>
 
 <script src="app.js" type="module"></script>
