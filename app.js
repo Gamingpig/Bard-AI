@@ -1042,95 +1042,11 @@ function voiceSampleBlob(sample) {
   view.setUint32(40, bytes.length, true); new Uint8Array(wav, 44).set(bytes);
   return new Blob([wav], { type: 'audio/wav' });
 }
-async function requestLiveVoiceSample(name, run) {
-  const result = await requestWorker('/api/live-token', {
-    userName: state.name,
-    memory: state.memory,
-    voiceName: name,
-    context: [],
-    preview: true
-  });
-  if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine Hörprobe bereitgestellt.');
+async function requestVoiceSample(name, run) {
+  const sample = await requestWorker('/api/voice-preview', { voiceName: name });
+  if (!sample.data || !sample.mimeType) throw new Error('Der Sprachdienst hat keine Hörprobe zurückgegeben.');
   if (run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
-
-  const liveConfig = { ...result.config, generationConfig: {
-    ...(result.config.generationConfig || {}),
-    responseModalities: ['AUDIO'],
-    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: name } } }
-  } };
-  const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
-  const socket = new WebSocket(socketUrl);
-  socket.binaryType = 'arraybuffer';
-  voicePreviewAudio = { name, socket };
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const audioParts = [];
-    const timeout = setTimeout(() => finish(reject, new Error('Die Live-Hörprobe hat zu lange gedauert.')), 35000);
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      try { socket.close(1000, 'Voice preview complete'); } catch {}
-      if (run === voicePreviewRun) voicePreviewAudio = null;
-      callback(value);
-    };
-    socket.onopen = () => {
-      try { socket.send(JSON.stringify({ setup: { model: result.model, ...liveConfig } })); }
-      catch { finish(reject, new Error('Die Live-Hörprobe konnte nicht gestartet werden.')); }
-    };
-    socket.onmessage = async event => {
-      let message;
-      try {
-        const data = event.data;
-        const text = typeof data === 'string' ? data
-          : data instanceof Blob ? await data.text()
-          : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
-          : ArrayBuffer.isView(data) ? new TextDecoder().decode(data)
-          : '';
-        if (!text) throw new TypeError('Leere Live-Nachricht');
-        message = JSON.parse(text);
-      } catch {
-        finish(reject, new Error('Die Live-Hörprobe hat eine ungültige Antwort erhalten.'));
-        return;
-      }
-      if (message.error?.message) {
-        finish(reject, new Error(String(message.error.message).slice(0, 300)));
-        return;
-      }
-      if (message.setupComplete || message.setup_complete) {
-        socket.send(JSON.stringify({ clientContent: {
-          turns: [{ role: 'user', parts: [{ text: 'Sag genau und natürlich auf Deutsch: Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?' }] }],
-          turnComplete: true
-        } }));
-        return;
-      }
-      const content = message.serverContent || message.server_content;
-      for (const part of content?.modelTurn?.parts || content?.model_turn?.parts || []) {
-        const inline = part.inlineData || part.inline_data;
-        if (inline?.data) audioParts.push(decodePcm16(inline.data));
-      }
-      if (content?.turnComplete || content?.turn_complete) {
-        if (run !== voicePreviewRun) {
-          finish(reject, new Error('Hörprobe abgebrochen.'));
-          return;
-        }
-        const total = audioParts.reduce((sum, part) => sum + part.length, 0);
-        if (!total) {
-          finish(reject, new Error('Für diese Stimme kam keine Live-Audio-Hörprobe zurück.'));
-          return;
-        }
-        const samples = new Float32Array(total);
-        let offset = 0;
-        for (const part of audioParts) { samples.set(part, offset); offset += part.length; }
-        finish(resolve, { voiceName: name, mimeType: 'audio/pcm;rate=24000', data: encodePcm16(samples), source: 'live-v1' });
-      }
-    };
-    socket.onerror = () => finish(reject, new Error('Die Live-Hörprobe konnte nicht verbunden werden.'));
-    socket.onclose = event => {
-      if (settled) return;
-      finish(reject, new Error(event.reason || 'Der Live-Kanal wurde während der Hörprobe geschlossen (' + event.code + ').'));
-    };
-  });
+  return { ...sample, source: 'tts-preview' };
 }
 async function playVoicePreview(name, button) {
   if (state.voice.active) {
@@ -1147,13 +1063,13 @@ async function playVoicePreview(name, button) {
   const run = voicePreviewRun;
   button.disabled = true;
   button.textContent = 'Lädt …';
-  $('#voicePickerStatus').textContent = `${name} · erstelle eine Hörprobe mit derselben Live-Stimme …`;
+  $('#voicePickerStatus').textContent = `${name} · erstelle eine Stimmprobe …`;
   try {
     voicePreviewContext = new AudioContext({ latencyHint: 'interactive' });
     await voicePreviewContext.resume();
     let sample = await readVoiceSample(name);
-    if (!sample || sample.source !== 'live-v1') {
-      sample = await requestLiveVoiceSample(name, run);
+    if (!sample) {
+      sample = await requestVoiceSample(name, run);
       await saveVoiceSample(sample);
     }
     if (run !== voicePreviewRun) return;
@@ -1167,13 +1083,17 @@ async function playVoicePreview(name, button) {
       if (voicePreviewAudio?.source !== source) return;
       voicePreviewAudio = null;
       button.textContent = '▶ Anhören';
-      $('#voicePickerStatus').textContent = `${name} · Live-Hörprobe beendet und für spätere Wiedergabe gespeichert`;
+      $('#voicePickerStatus').textContent = sample.source === 'live-v1'
+        ? `${name} · Live-Hörprobe beendet und für spätere Wiedergabe gespeichert`
+        : `${name} · Hörprobe beendet und gespeichert; die Live-Stimme kann leicht abweichen`;
       voicePreviewContext?.close().catch(() => {});
       voicePreviewContext = null;
     };
     source.start();
     button.textContent = '■ Stoppen';
-    $('#voicePickerStatus').textContent = `${name} · originale Live-Stimme läuft`;
+    $('#voicePickerStatus').textContent = sample.source === 'live-v1'
+      ? `${name} · originale Live-Stimme läuft`
+      : `${name} · Stimmprobe läuft (kann leicht vom Live-Modus abweichen)`;
   } catch (error) {
     if (run === voicePreviewRun) {
       stopVoicePreview();
@@ -1230,6 +1150,7 @@ window.addEventListener('pagehide', () => stopLiveVoice(false));
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+
 
 
 
