@@ -34,6 +34,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0 },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -371,54 +372,232 @@ function toggleImageMode() {
   if (state.imageMode) $('#prompt').focus();
 }
 
-function stopRecognition() {
-  clearTimeout(state.recognitionTimer); clearTimeout(state.recognitionWatchdog);
-  state.recognitionTimer = state.recognitionWatchdog = null;
-  const recognition = state.recognition; state.recognition = null;
-  try { recognition?.abort(); } catch {}
-    $('#voiceButton').classList.remove('listening'); $('#voiceButton').lastElementChild.textContent = 'Mit Stimme chatten';
+
+function voiceState(mode, label, hint) {
+  const scene = $('#voiceDialog .voice-scene');
+  if (!scene) return;
+  scene.dataset.state = mode;
+  $('#voiceStateLabel').textContent = label;
+  $('#voiceStateHint').textContent = hint || '';
 }
-function startRecognition() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) { notice('Dein Browser unterstützt keine Spracherkennung.', true); return; }
-  if (state.recognition) { stopRecognition(); return; }
-  const recognition = new Recognition(); state.recognition = recognition;
-  recognition.lang = 'de-DE'; recognition.continuous = true; recognition.interimResults = false;
-  recognition.onstart = () => {
-    if (state.recognition !== recognition) return;
-    state.restartDelay = 350; state.recognitionLastActivity = Date.now();
-    $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Ich höre zu · stoppen';
-    clearTimeout(state.recognitionWatchdog);
-    state.recognitionWatchdog = setTimeout(() => {
-      if (state.recognition === recognition && Date.now() - state.recognitionLastActivity >= 90000) {
-        stopRecognition(); startRecognition();
-      }
-    }, 90000);
-  };
-  recognition.onresult = event => {
-    if (state.recognition !== recognition) return;
-    state.recognitionLastActivity = Date.now();
-    for (let index = event.resultIndex; index < event.results.length; index++) {
-      const result = event.results[index];
-      if (!result.isFinal) continue;
-      const text = result[0]?.transcript?.trim();
-      if (text) { stopRecognition(); void submitPrompt(text); return; }
+function voiceTone(frequency, delay = 0) {
+  const ctx = state.voice.audioContext;
+  if (!ctx || ctx.state !== 'running' || state.voice.muted) return;
+  const start = ctx.currentTime + delay;
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(frequency, start);
+  oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.18, start + 0.11);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(0.035, start + 0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
+  oscillator.connect(gain); gain.connect(ctx.destination);
+  oscillator.start(start); oscillator.stop(start + 0.23);
+}
+function encodePcm16(floatSamples) {
+  const bytes = new Uint8Array(floatSamples.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < floatSamples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, floatSamples[i]));
+    view.setInt16(i * 2, sample < 0 ? sample * 32768 : sample * 32767, true);
+  }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+function decodePcm16(base64) {
+  const binary = atob(base64);
+  const samples = new Float32Array(Math.floor(binary.length / 2));
+  for (let i = 0; i < samples.length; i++) {
+    let value = binary.charCodeAt(i * 2) | (binary.charCodeAt(i * 2 + 1) << 8);
+    if (value & 0x8000) value -= 0x10000;
+    samples[i] = value / 32768;
+  }
+  return samples;
+}
+function stopVoicePlayback() {
+  const voice = state.voice;
+  for (const source of voice.sources) { try { source.stop(); } catch {} }
+  voice.sources.clear();
+  voice.nextPlayTime = voice.audioContext?.currentTime || 0;
+}
+function playVoiceAudio(base64) {
+  const voice = state.voice, ctx = voice.audioContext;
+  if (!ctx || ctx.state !== 'running') return;
+  const samples = decodePcm16(base64);
+  if (!samples.length) return;
+  const buffer = ctx.createBuffer(1, samples.length, 24000);
+  buffer.copyToChannel(samples, 0);
+  const source = ctx.createBufferSource(); source.buffer = buffer;
+  const gain = ctx.createGain(); gain.gain.value = 0.94;
+  source.connect(gain); gain.connect(ctx.destination);
+  const start = Math.max(ctx.currentTime + 0.035, voice.nextPlayTime || 0);
+  voice.nextPlayTime = start + buffer.duration;
+  voice.sources.add(source);
+  source.onended = () => {
+    voice.sources.delete(source);
+    if (!voice.sources.size && voice.pendingTurnComplete && state.voice.active) {
+      voice.pendingTurnComplete = false;
+      voiceState('listening', 'Ich höre zu', 'Du kannst jederzeit weitersprechen.');
     }
   };
-  recognition.onerror = event => {
-    if (state.recognition !== recognition) return;
-    if (['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'].includes(event.error)) {
-      stopRecognition(); notice('Mikrofonzugriff oder Spracherkennung ist nicht verfügbar.', true);
+  source.start(start);
+}
+function appendCaption(element, text) {
+  const clean = safeText(text).slice(0, 2400);
+  if (!clean) return;
+  const previous = element.dataset.caption || '';
+  const next = (previous + clean).slice(-2400);
+  element.dataset.caption = next;
+  element.textContent = next;
+}
+function handleVoiceMessage(message) {
+  const voice = state.voice;
+  if (message.error?.message) { voiceFailure(String(message.error.message).slice(0, 300)); return; }
+  const content = message.serverContent;
+  if (!content) return;
+  const input = content.inputTranscription?.text || content.input_transcription?.text;
+  const output = content.outputTranscription?.text || content.output_transcription?.text;
+  if (input) appendCaption($('#voiceUserCaption'), input);
+  if (output) appendCaption($('#voiceAssistantCaption'), output);
+  if (content.interrupted) {
+    stopVoicePlayback(); voice.pendingTurnComplete = false;
+    voiceState('listening', 'Ich höre zu', 'Sag einfach weiter — ich bin bei dir.');
+  }
+  const parts = content.modelTurn?.parts || content.model_turn?.parts || [];
+  for (const part of parts) {
+    const inline = part.inlineData || part.inline_data;
+    if (inline?.data) {
+      voiceState('speaking', 'Bard AI spricht', 'Du kannst mich jederzeit unterbrechen.');
+      playVoiceAudio(inline.data);
     }
+  }
+  if (content.turnComplete || content.turn_complete) {
+    voice.pendingTurnComplete = true;
+    if (!voice.sources.size) {
+      voice.pendingTurnComplete = false;
+      voiceState('listening', 'Ich höre zu', 'Du kannst jederzeit weitersprechen.');
+    }
+  } else if ((content.inputTranscription || content.input_transcription) && !parts.length) {
+    voiceState('thinking', 'Ich denke nach', 'Ich habe dich gehört und formuliere eine Antwort.');
+  }
+}
+async function startVoiceCapture() {
+  const voice = state.voice, ctx = voice.audioContext;
+  if (!voice.stream || !ctx || !ctx.audioWorklet) throw new Error('Dieser Browser unterstützt den Live-Audiomodus nicht. Bitte aktualisiere deinen Browser.');
+  const workletUrl = new URL('pcm-capture.js', document.baseURI).href;
+  await ctx.audioWorklet.addModule(workletUrl);
+  const source = ctx.createMediaStreamSource(voice.stream);
+  const processor = new AudioWorkletNode(ctx, 'bard-pcm-capture');
+  const silent = ctx.createGain(); silent.gain.value = 0;
+  processor.port.onmessage = event => {
+    if (!state.voice.active || state.voice.muted || !voice.socket || voice.socket.readyState !== WebSocket.OPEN) return;
+    const data = encodePcm16(new Float32Array(event.data));
+    voice.socket.send(JSON.stringify({ realtimeInput: { audio: { data, mimeType: 'audio/pcm;rate=16000' } } }));
   };
-  recognition.onend = () => {
-    if (state.recognition !== recognition) return;
-    state.recognition = null; clearTimeout(state.recognitionWatchdog);
-    state.recognitionTimer = setTimeout(startRecognition, state.restartDelay);
-    state.restartDelay = Math.min(Math.round(state.restartDelay * 1.7), 5000);
-  };
-  try { recognition.start(); }
-  catch { state.recognition = null; state.recognitionTimer = setTimeout(startRecognition, state.restartDelay); state.restartDelay = Math.min(state.restartDelay * 1.7, 5000); }
+  source.connect(processor); processor.connect(silent); silent.connect(ctx.destination);
+  voice.sourceNode = source; voice.processor = processor; voice.silentGain = silent;
+}
+function stopVoiceCapture() {
+  const voice = state.voice;
+  try { voice.processor?.disconnect(); } catch {}
+  try { voice.sourceNode?.disconnect(); } catch {}
+  try { voice.silentGain?.disconnect(); } catch {}
+  voice.processor?.port && (voice.processor.port.onmessage = null);
+  voice.processor = voice.sourceNode = voice.silentGain = null;
+  for (const track of voice.stream?.getTracks?.() || []) track.stop();
+  voice.stream = null;
+}
+function voiceFailure(message) {
+  const voice = state.voice;
+  if (!voice.active) return;
+  voice.active = false; voice.isReady = false;
+  stopVoiceCapture(); stopVoicePlayback();
+  try { voice.socket?.close(); } catch {}
+  voice.socket = null;
+  voiceState('error', 'Verbindung unterbrochen', message || 'Der Live-Sprachkanal konnte nicht gestartet werden.');
+  $('#voiceRetry').classList.remove('hidden');
+  $('#voiceMute').classList.add('hidden');
+}
+async function startLiveVoice(keepDialog = false) {
+  const voice = state.voice;
+  if (voice.active) return;
+  if (!keepDialog && !$('#voiceDialog').open) $('#voiceDialog').showModal();
+  voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false;
+  voice.sources = new Set(); voice.nextPlayTime = 0;
+  $('#voiceRetry').classList.add('hidden'); $('#voiceMute').classList.remove('hidden');
+  $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Live-Gespräch läuft';
+  $('#voiceMute').setAttribute('aria-pressed', 'false');
+  $('#voiceMute').lastElementChild.textContent = 'Mikro stumm';
+  $('#voiceUserCaption').textContent = ''; $('#voiceUserCaption').dataset.caption = '';
+  $('#voiceAssistantCaption').textContent = ''; $('#voiceAssistantCaption').dataset.caption = '';
+  voiceState('connecting', 'Live-Verbindung wird aufgebaut', 'Verbinde sicher mit Bard AI Live.');
+  try {
+    voice.audioContext = new AudioContext({ latencyHint: 'interactive' });
+    await voice.audioContext.resume();
+    voice.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    const result = await requestWorker('/api/live-token', {
+      userName: state.name,
+      memory: state.memory,
+      context: state.messages.slice(-12).map(item => ({ role: item.role, text: String(item.text || '').slice(0, 1000) }))
+    });
+    if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
+    const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(result.token);
+    const socket = new WebSocket(socketUrl); voice.socket = socket;
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Der Live-Kanal antwortet zu langsam. Bitte versuche es erneut.')), 18000);
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ setup: { model: result.model, ...result.config } }));
+      };
+      socket.onmessage = event => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        if (message.setupComplete || message.setup_complete) {
+          clearTimeout(timeout); resolve(); return;
+        }
+        handleVoiceMessage(message);
+      };
+      socket.onerror = () => { clearTimeout(timeout); reject(new Error('Die Verbindung zu Bard AI Live ist fehlgeschlagen.')); };
+      socket.onclose = event => {
+        clearTimeout(timeout);
+        if (voice.active && !voice.intentionalClose) {
+          if (!voice.isReady) reject(new Error('Der Live-Kanal wurde beim Verbindungsaufbau geschlossen (' + event.code + ').'));
+          else voiceFailure('Die Live-Verbindung wurde beendet. Starte den Sprachmodus erneut.');
+        }
+      };
+    });
+    if (!voice.active) return;
+    voice.isReady = true;
+    await startVoiceCapture();
+    voiceTone(660); voiceTone(880, 0.12);
+    voiceState('listening', 'Ich höre zu', 'Sag einfach, was dir gerade durch den Kopf geht.');
+  } catch (error) {
+    voiceFailure(error.message || 'Mikrofon oder Live-Verbindung ist nicht verfügbar.');
+    if (!voice.active) return;
+  }
+}
+function stopLiveVoice(closeDialog = true) {
+  const voice = state.voice;
+  voice.active = false; voice.intentionalClose = true; voice.isReady = false;
+  stopVoiceCapture(); stopVoicePlayback();
+  if (voice.socket) { try { voice.socket.close(1000, 'User ended session'); } catch {} }
+  voice.socket = null;
+  voice.audioContext?.close().catch(() => {});
+  voice.audioContext = null; voice.intentionalClose = false;
+  if (closeDialog && $('#voiceDialog').open) $('#voiceDialog').close();
+  $('#voiceButton').classList.remove('listening');
+  $('#voiceButton').lastElementChild.textContent = 'Bard AI Live';
+  if ($('#voiceDialog').open) voiceState('idle', 'Gespräch beendet', 'Du kannst den Sprachmodus jederzeit erneut starten.');
+}
+function toggleVoiceMute() {
+  const voice = state.voice;
+  if (!voice.active || !voice.stream) return;
+  voice.muted = !voice.muted;
+  for (const track of voice.stream.getAudioTracks()) track.enabled = !voice.muted;
+  $('#voiceMute').setAttribute('aria-pressed', String(voice.muted));
+  $('#voiceMute').lastElementChild.textContent = voice.muted ? 'Mikro einschalten' : 'Mikro stumm';
+  voiceState(voice.muted ? 'muted' : 'listening', voice.muted ? 'Mikrofon stumm' : 'Ich höre zu', voice.muted ? 'Bard AI wartet, bis du dein Mikro wieder einschaltest.' : 'Du kannst jederzeit weitersprechen.');
 }
 
 $('#userName').value = state.name;
@@ -444,10 +623,18 @@ $('#imageButton').addEventListener('click', toggleImageMode);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
-$('#voiceButton').addEventListener('click', startRecognition);
+
+$('#voiceButton').addEventListener('click', () => void startLiveVoice());
+$('#voiceClose').addEventListener('click', () => stopLiveVoice());
+$('#voiceEnd').addEventListener('click', () => { voiceTone(440); stopLiveVoice(); });
+$('#voiceMute').addEventListener('click', toggleVoiceMute);
+$('#voiceRetry').addEventListener('click', () => { stopLiveVoice(false); void startLiveVoice(true); });
+$('#voiceDialog').addEventListener('cancel', event => { event.preventDefault(); stopLiveVoice(); });
+$('#voiceDialog').addEventListener('close', () => { if (state.voice.active) stopLiveVoice(false); });
+
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
-window.addEventListener('pagehide', stopRecognition);
+window.addEventListener('pagehide', () => stopLiveVoice(false));
 restoreMessages().catch(() => notice('Der lokale Chatverlauf konnte nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
