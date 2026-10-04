@@ -243,10 +243,12 @@ async function liveToken(request, env, cors) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.apiKey },
     body: JSON.stringify({
-      uses: 1,
-      expireTime: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
-      newSessionExpireTime: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      liveConnectConstraints: { model: modelName, config: liveConfig }
+      authToken: {
+        uses: 1,
+        expireTime: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
+        newSessionExpireTime: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        bidiGenerateContentSetup: { model: modelName, ...liveConfig }
+      }
     }),
     signal: AbortSignal.timeout(20_000)
   });
