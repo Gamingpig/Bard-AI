@@ -946,22 +946,30 @@ async function startLiveVoice(keepDialog = false) {
     };
     const result = await requestWorker('/api/live-token', tokenRequest);
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
-    try {
-      await openLiveSocket(result, configureVoiceSession(result));
-    } catch (primaryError) {
-      const fallbackModel = 'models/gemini-3.1-flash-live-preview';
-      const primaryModel = String(result.model).replace(/^models\//, '');
-      if (!isProviderQuotaError(primaryError) || primaryModel === fallbackModel.replace(/^models\//, '')) throw primaryError;
-      voiceState('connecting', 'Wechsle Sprachroute', 'Die Standardroute ist gerade ausgelastet. Ich versuche einmal eine kompatible Alternative.');
-      const fallback = await requestWorker('/api/live-token', tokenRequest);
-      if (!fallback.token || !fallback.config) throw primaryError;
+    const liveCandidates = [
+      result.model,
+      'models/gemini-2.0-flash-live-001',
+      'models/gemini-2.5-flash-native-audio',
+      'models/gemini-3.1-flash-live-preview'
+    ].filter((model, index, models) => model && models.indexOf(model) === index);
+    const connectionErrors = [];
+    let connected = false;
+    for (let index = 0; index < liveCandidates.length; index++) {
+      if (!voice.active || voice.intentionalClose) break;
+      const model = liveCandidates[index];
       try {
-        await openLiveSocket(fallback, configureVoiceSession(fallback), fallbackModel);
-        notice('Bard AI nutzt vorübergehend eine alternative Sprachroute.', false);
-      } catch (fallbackError) {
-        throw new Error(`${primaryError.message || 'Standard-Live-Modell nicht verfügbar.'} ${fallbackError.message || 'Auch die Live-Kompatibilitätsroute konnte nicht verbinden.'}`);
+        const session = index === 0 ? result : await requestWorker('/api/live-token', tokenRequest);
+        if (!session.token || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
+        if (index > 0) voiceState('connecting', 'Verbinde erneut', 'Ich suche eine verfügbare Sprachverbindung.');
+        await openLiveSocket(session, configureVoiceSession(session), model);
+        if (index > 0) notice('Bard AI hat eine alternative Verbindung hergestellt.', false);
+        connected = true;
+        break;
+      } catch (error) {
+        connectionErrors.push(error);
       }
     }
+    if (!connected && voice.active) throw connectionErrors.at(-1) || new Error('Der Sprachmodus konnte gerade nicht gestartet werden.');
     if (!voice.active) return;
     voice.isReady = true;
     await startVoiceCapture();
