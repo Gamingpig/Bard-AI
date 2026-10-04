@@ -234,6 +234,7 @@ async function liveToken(request, env, cors) {
     generationConfig: { responseModalities: ['AUDIO'], ...(responseMode ? { maxOutputTokens: responseMode === 'creative' ? 4096 : 512 } : {}), speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: /^[A-Za-z][A-Za-z-]{0,39}$/.test(String(body.voiceName || '')) ? String(body.voiceName) : 'Puck' } } } },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    realtimeInputConfig: { activityHandling: 'NO_INTERRUPTION' },
     systemInstruction: { parts: [{ text: systemText }] },
     sessionResumption: {},
     tools: [
