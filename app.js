@@ -724,13 +724,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
-      const messages = state.messages.slice(-40)
-        .map(message => ({ role: message.role === 'assistant' ? 'assistant' : 'user', text: String(message.text || '').slice(0, 12000) }))
-        .filter(message => message.text.trim());
       const codePreview = !state.imageMode && requestsCodePreview(userMessage.text);
-      if (codePreview && messages.length) {
-        messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
-      }
       const result = await requestLiveTextReply(userMessage.text, codePreview);
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
