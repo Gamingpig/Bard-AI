@@ -16,7 +16,7 @@
   <div class="shell">
     <header class="topbar">
       <a class="brand" href="./" aria-label="Bard AI Startseite"><img src="icons/bard.svg" alt=""><span>Bard AI</span></a>
-      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="chats-button" id="chatsButton" aria-haspopup="dialog">Chats <span id="chatCount">0</span></button><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button></div>
+      <div class="top-actions"><span class="connection" id="connectionState"><i></i> Offline</span><button class="chats-button" id="chatsButton" aria-haspopup="dialog">Chats <span id="chatCount">0</span></button><button class="icon-button" id="settingsButton" aria-haspopup="dialog" aria-label="Einstellungen" title="Einstellungen"><span aria-hidden="true">⚙</span></button><button class="icon-button theme-toggle" id="themeToggle" aria-label="Zum hellen Design wechseln" title="Zum hellen Design wechseln"><span aria-hidden="true">☼</span></button></div>
     </header>
 
     <main>
@@ -33,12 +33,6 @@
       </section>
 
       <footer class="composer-wrap">
-        <details class="memory-panel">
-          <summary><span>Dein Memory</span><span id="memoryCount">Noch leer</span></summary>
-          <p id="memoryEmpty">Gespeicherte Namen und wichtige Vorlieben erscheinen hier nur auf diesem Gerät.</p>
-          <ul id="memoryList" aria-live="polite"></ul>
-          <form id="memoryForm"><input id="memoryInput" maxlength="180" placeholder="Erinnerung hinzufügen …" aria-label="Erinnerung hinzufügen"><button class="quiet-button" type="submit">Speichern</button></form>
-        </details>
         <div class="composer">
           <button id="imageButton" class="tool-button" aria-label="Bild erstellen" title="Bild erstellen">＋</button>
           <textarea id="prompt" rows="1" maxlength="12000" placeholder="Frag Bard AI …" aria-label="Nachricht"></textarea>
@@ -49,6 +43,19 @@
       </footer>
     </main>
   </div>
+
+  <dialog id="settingsDialog" class="chat-dialog settings-dialog" aria-labelledby="settingsDialogTitle">
+    <header class="chat-dialog-head"><div><span class="eyebrow">DEIN PROFIL</span><h2 id="settingsDialogTitle">Einstellungen</h2></div><button class="icon-button" id="closeSettingsDialog" aria-label="Einstellungen schließen">×</button></header>
+    <div class="chat-dialog-body settings-dialog-body">
+      <details class="memory-panel settings-memory" open>
+        <summary><span>Dein Memory</span><span id="memoryCount">Noch leer</span></summary>
+        <p id="memoryEmpty">Gespeicherte Namen und wichtige Vorlieben erscheinen hier nur auf diesem Gerät.</p>
+        <ul id="memoryList" aria-live="polite"></ul>
+        <form id="memoryForm"><input id="memoryInput" maxlength="180" placeholder="Erinnerung hinzufügen …" aria-label="Erinnerung hinzufügen"><button class="quiet-button" type="submit">Speichern</button></form>
+      </details>
+      <p class="chat-library-note">Dein Name und wichtige Erinnerungen werden auf diesem Gerät gespeichert und Bard bei neuen Nachrichten mitgegeben.</p>
+    </div>
+  </dialog>
 
   <dialog id="chatDialog" class="chat-dialog" aria-labelledby="chatDialogTitle">
     <header class="chat-dialog-head"><div><span class="eyebrow">DEINE BIBLIOTHEK</span><h2 id="chatDialogTitle">Deine Chats</h2></div><button class="icon-button" id="closeChatDialog" aria-label="Chats schließen">×</button></header>
