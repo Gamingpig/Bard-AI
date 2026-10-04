@@ -131,8 +131,12 @@ async function requestWorker(path, payload) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    const detail = String(data.error || '');
     const error = new Error(friendlyRequestError(response.status));
     error.status = response.status;
+    if (response.status === 429 && /zu viele live-verbindungsstarts/i.test(detail)) error.failureKind = 'live-burst';
+    else if (response.status === 429 && /tageslimit/i.test(detail)) error.failureKind = 'daily-limit';
+    else if (/resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota|rate limit/i.test(detail)) error.failureKind = 'provider-quota';
     throw error;
   }
   return data;
@@ -160,6 +164,8 @@ function friendlyRequestError(status) {
   return 'Hm, Bard AI konnte darauf gerade nicht antworten. Versuch es bitte noch einmal.';
 }
 function friendlyFailure(error, feature = 'text') {
+  if (feature === 'text' && error?.failureKind === 'live-burst') return 'Zu viele Verbindungsstarts in kurzer Zeit. Warte bitte ein paar Minuten; deine Nachricht steht noch hier.';
+  if (feature === 'text' && error?.failureKind === 'daily-limit') return 'Das Tageslimit für diese Funktion ist erreicht. Deine Nachricht steht noch hier.';
   if (isProviderQuotaError(error)) return feature === 'voice'
     ? 'Der Sprachdienst ist gerade ausgelastet. Versuch es bitte später noch einmal.'
     : 'Bard AI ist gerade ausgelastet. Deine Nachricht steht noch hier.';
@@ -826,6 +832,7 @@ async function requestLiveTextReply(text, codePreview = false) {
     } catch (error) {
       recordLiveModelResult(candidate.model, performance.now() - startedAt, false);
       lastError = error;
+      if (error?.failureKind === 'live-burst') break;
     }
   }
   audioContext?.close().catch(() => {});
@@ -1303,7 +1310,7 @@ function openLiveSocket(result, config, model = result.model) {
   });
 }
 function isProviderQuotaError(error) {
-  return error?.status === 429 || /resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota|\b429\b/i.test(error?.message || '');
+  return error?.failureKind === 'provider-quota' || /resource[_ ]exhausted|current quota|quota exceeded|exceeded your current quota/i.test(error?.message || '');
 }
 async function startLiveVoice(keepDialog = false) {
   const voice = state.voice;
