@@ -132,7 +132,7 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
       body: {
         userName: 'Mira',
         responseMode: 'concise',
-        memory: ['mag Astrofotografie'],
+        memory: Array.from({ length: 25 }, (_, index) => `Erinnerung ${index}`),
         context: [{ role: 'user', text: 'Wir planen einen Ausflug.' }, { role: 'assistant', text: 'Gern!' }]
       }
     }), env);
@@ -155,7 +155,8 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
     const instruction = data.config.systemInstruction.parts[0].text;
     assert.equal(data.model, 'models/gemini-3.8-live');
     assert.match(instruction, /Gespeicherter Name für die Anrede: "Mira"/);
-    assert.match(instruction, /mag Astrofotografie/);
+    assert.match(instruction, /Erinnerung 24/);
+    assert.doesNotMatch(instruction, /Erinnerung 0/);
     assert.match(instruction, /Wir planen einen Ausflug/);
 
     const fallbackResponse = await worker.fetch(request('/api/live-token', { method: 'POST', body: { model: 'gemini-3.1-flash-live-preview', userName: 'Mira', voiceName: 'Puck', responseMode: 'creative' } }), env);
