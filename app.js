@@ -34,6 +34,17 @@ const LIVE_VOICES = [
   { name: 'Sulafat', style: 'Warm' }
 ];
 const LIVE_VOICE_NAMES = new Set(LIVE_VOICES.map(voice => voice.name));
+function isSensitiveMemoryFact(value) {
+  const text = String(value || '');
+  return [
+    /\b(?:adresse|anschrift|postanschrift|wohnort|postleitzahl|plz|street address|home address|zip code)\b/iu,
+    /\b(?:telefonnummer|handynummer|mobilnummer|e-?mail(?:adresse)?|email address|phone number)\b/iu,
+    /\b(?:diagnose|allerg(?:ie|isch)|medikament|verschreibung|schwanger|geburtstag|geburtsdatum|krankheit|gesundheitszustand|blood pressure|medical condition|pregnan|medication|diagnosis|birthday|date of birth)\b/iu,
+    /\b(?:einkommen|gehalt|budget|finanzen|bankkonto|konto|kreditkarte|schulden|ich verdiene|salary|income|financ|bank account|credit card|debt)\b/iu,
+    /\b(?:ich wohne in|ich lebe in|mein wohnort|i live at|my home is)\b/iu
+  ].some(pattern => pattern.test(text));
+}
+
 const dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open('bard-ai-pwa', 7);
   request.onupgradeneeded = event => {
@@ -70,7 +81,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, visualStream: null, visualType: '', visualTimer: null, visualBusy: false, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -78,7 +89,7 @@ const state = {
   restartDelay: 350,
   installPrompt: null,
   name: readStored('bard_user_name') || '',
-  memory: (() => { try { const value = JSON.parse(readStored('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-24) : []; } catch { return []; } })(),
+  memory: (() => { try { const value = JSON.parse(readStored('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string' && !isSensitiveMemoryFact(item)).slice(-24) : []; } catch { return []; } })(),
   recentContext: (() => { try { const value = JSON.parse(readStored('bard_recent_context') || '[]'); return Array.isArray(value) ? value.filter(item => item && typeof item.text === 'string').slice(-16) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: [],
@@ -230,6 +241,14 @@ async function restoreProfile() {
   if (storedMemory !== null) {
     try { const value = JSON.parse(storedMemory); state.memory = Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-24) : []; } catch { state.memory = []; }
   } else if (Array.isArray(backup?.memory)) state.memory = backup.memory.filter(item => typeof item === 'string').slice(-24);
+  const migrationKey = 'bard_memory_sensitive_purged_v1';
+  if (readStored(migrationKey) !== 'done') {
+    const filteredMemory = state.memory.filter(item => !isSensitiveMemoryFact(item));
+    if (filteredMemory.length !== state.memory.length) {
+      state.memory = filteredMemory;
+      try { await persistProfile(); writeStored(migrationKey, 'done'); } catch {}
+    } else writeStored(migrationKey, 'done');
+  }
   writeStored('bard_user_name', state.name);
   writeStored('bard_memory', JSON.stringify(state.memory));
   $('#userName').value = state.name;
@@ -536,10 +555,8 @@ function captureConversationMemory(text) {
   const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte|\bbitte nicht vergessen)[\s,:-]+(?:dass\s+)?(.+)/iu);
   if (explicit?.[1]) changed = remember(explicit[1]) || changed;
   const stableFactPatterns = [
-    /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich komme aus|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+([^.!?\n]{2,140})/iu,
+    /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study)\s+([^.!?\n]{2,140})/iu,
     /\b(mein(?:e|en)? lieblings(?:farbe|film|serie|spiel|musik|band|buch|essen|getränk|sport|verein)? ist)\s+([^.!?\n]{2,100})/iu,
-    /\b(ich bin allergisch gegen|ich vertrage|ich nehme regelmäßig|ich nehme täglich|meine diagnose ist|ich lebe mit|ich bin schwanger|mein geburtstag ist|ich bin)\s+([^.!?\n]{2,140})/iu,
-    /\b(meine adresse ist|meine telefonnummer ist|meine email(?:adresse)? ist|mein budget ist|mein einkommen ist|ich verdiene)\s+([^.!?\n]{2,140})/iu,
     /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu
   ];
   const capturedFacts = new Set();
@@ -1036,6 +1053,105 @@ function stopVoiceCapture() {
   for (const track of voice.stream?.getTracks?.() || []) track.stop();
   voice.stream = null;
 }
+async function sendLiveVisualFrame() {
+  const voice = state.voice, video = $('#voiceVideoPreview'), socket = voice.socket;
+  if (voice.visualBusy || !voice.active || !voice.visualStream || !video?.videoWidth || !socket || socket.readyState !== WebSocket.OPEN) return;
+  voice.visualBusy = true;
+  try {
+    const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext('2d', { alpha: false });
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const data = canvas.toDataURL('image/jpeg', 0.62).split(',')[1];
+    if (data && voice.socket === socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ realtimeInput: { video: { data, mimeType: 'image/jpeg' } } }));
+    }
+  } catch {
+    $('#visualCaptureStatus').textContent = 'Das aktuelle Bild konnte nicht übertragen werden.';
+  } finally { voice.visualBusy = false; }
+}
+function updateVisualCaptureControls() {
+  const voice = state.voice, camera = $('#cameraToggle'), screen = $('#screenToggle'), select = $('#cameraSelect');
+  const ready = Boolean(voice.active && voice.isReady);
+  camera.disabled = !ready; screen.disabled = !ready;
+  select.disabled = !ready || voice.visualType === 'screen';
+  camera.setAttribute('aria-pressed', String(voice.visualType === 'camera'));
+  screen.setAttribute('aria-pressed', String(voice.visualType === 'screen'));
+  camera.lastElementChild.textContent = voice.visualType === 'camera' ? 'Kamera stoppen' : 'Kamera';
+  screen.lastElementChild.textContent = voice.visualType === 'screen' ? 'Teilen stoppen' : 'Bildschirm teilen';
+  const preview = $('#voiceVideoPreview');
+  preview.classList.toggle('hidden', !voice.visualType);
+  preview.setAttribute('aria-label', voice.visualType === 'screen' ? 'Vorschau des geteilten Bildschirms' : 'Kameravorschau');
+  $('#visualCaptureStatus').textContent = voice.visualType === 'camera'
+    ? 'Kamera aktiv · Bilder werden höchstens einmal pro Sekunde übertragen.'
+    : voice.visualType === 'screen'
+      ? 'Bildschirmfreigabe aktiv · Bilder werden höchstens einmal pro Sekunde übertragen.'
+      : 'Kamera und Bildschirm werden erst nach deiner Freigabe übertragen. Beim Wechsel zum Homescreen kann der Browser die Verbindung anhalten.';
+}
+function stopLiveVisualCapture() {
+  const voice = state.voice;
+  if (voice.visualTimer) clearInterval(voice.visualTimer);
+  voice.visualTimer = null;
+  const stream = voice.visualStream;
+  voice.visualStream = null; voice.visualType = '';
+  for (const track of stream?.getTracks?.() || []) { track.onended = null; track.stop(); }
+  const preview = $('#voiceVideoPreview');
+  if (preview) preview.srcObject = null;
+  if ($('#cameraToggle')) updateVisualCaptureControls();
+}
+async function listLiveCameras() {
+  const select = $('#cameraSelect'), previous = select.value;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  select.replaceChildren();
+  for (const [value, label] of [['auto','Automatische Kamera'],['facing:user','Vorderkamera / Selfie'],['facing:environment','Rückkamera']]) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
+  }
+  devices.filter(device => device.kind === 'videoinput').forEach((device, index) => {
+    const option = document.createElement('option'); option.value = 'device:' + device.deviceId;
+    option.textContent = device.label || 'Kamera ' + (index + 1); select.append(option);
+  });
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+async function startLiveVisualCapture(type) {
+  const voice = state.voice;
+  if (!voice.active || !voice.isReady || !voice.socket || voice.socket.readyState !== WebSocket.OPEN) {
+    $('#visualCaptureStatus').textContent = 'Starte zuerst ein Live-Gespräch.'; return;
+  }
+  if (voice.visualType === type) { stopLiveVisualCapture(); return; }
+  stopLiveVisualCapture();
+  try {
+    if (!navigator.mediaDevices) throw new Error('Dieser Browser bietet keinen Medienzugriff.');
+    let stream;
+    if (type === 'screen') {
+      if (!navigator.mediaDevices.getDisplayMedia) throw new Error('Bildschirmfreigabe wird von diesem Browser nicht unterstützt.');
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 1, max: 1 } }, audio: false });
+    } else {
+      if (!navigator.mediaDevices.getUserMedia) throw new Error('Kamerazugriff wird von diesem Browser nicht unterstützt.');
+      const selected = $('#cameraSelect').value;
+      const video = selected.startsWith('facing:')
+        ? { facingMode: { ideal: selected.slice(7) }, frameRate: { ideal: 1, max: 1 } }
+        : selected.startsWith('device:')
+          ? { deviceId: { exact: selected.slice(7) }, frameRate: { ideal: 1, max: 1 } }
+          : { frameRate: { ideal: 1, max: 1 } };
+      stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      await listLiveCameras();
+    }
+    voice.visualStream = stream; voice.visualType = type;
+    const preview = $('#voiceVideoPreview'); preview.srcObject = stream; await preview.play();
+    const track = stream.getVideoTracks()[0];
+    track.addEventListener('ended', () => { if (voice.visualStream === stream) stopLiveVisualCapture(); }, { once: true });
+    updateVisualCaptureControls(); await sendLiveVisualFrame();
+    voice.visualTimer = setInterval(() => void sendLiveVisualFrame(), 1100);
+  } catch (error) {
+    stopLiveVisualCapture();
+    $('#visualCaptureStatus').textContent = error?.name === 'NotAllowedError'
+      ? 'Freigabe abgelehnt. Du kannst sie erneut starten und im Systemdialog erlauben.'
+      : error?.name === 'NotFoundError' ? 'Keine passende Kamera oder Bildschirmquelle gefunden.'
+      : String(error?.message || 'Freigabe konnte nicht gestartet werden.').slice(0, 180);
+  }
+}
 function voiceFailure(message) {
   const voice = state.voice;
   if (!voice.active) return;
@@ -1197,6 +1313,7 @@ async function startLiveVoice(keepDialog = false) {
     if (!connected && voice.active) throw connectionErrors.at(-1) || new Error('Der Sprachmodus konnte gerade nicht gestartet werden.');
     if (!voice.active) return;
     voice.isReady = true;
+    updateVisualCaptureControls();
     await startVoiceCapture();
     voiceTone(660); voiceTone(880, 0.12);
     voiceState('listening', 'Ich höre zu', 'Sag einfach, was dir gerade durch den Kopf geht.');
@@ -1208,7 +1325,7 @@ async function startLiveVoice(keepDialog = false) {
 function stopLiveVoice(closeDialog = true) {
   const voice = state.voice;
   voice.active = false; voice.intentionalClose = true; voice.isReady = false;
-  stopVoiceCapture(); stopVoicePlayback();
+  stopLiveVisualCapture(); stopVoiceCapture(); stopVoicePlayback();
   if (voice.socket) { try { voice.socket.close(1000, 'User ended session'); } catch {} }
   voice.socket = null;
   voice.audioContext?.close().catch(() => {});
@@ -1258,6 +1375,9 @@ $('#prompt').addEventListener('input', resizePrompt);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
 
 $('#voiceButton').addEventListener('click', () => void startLiveVoice());
+$('#cameraToggle').addEventListener('click', () => void startLiveVisualCapture('camera'));
+$('#screenToggle').addEventListener('click', () => void startLiveVisualCapture('screen'));
+$('#cameraSelect').addEventListener('change', () => { if (state.voice.visualType === 'camera') void startLiveVisualCapture('camera'); });
 $('#voiceClose').addEventListener('click', () => stopLiveVoice());
 $('#voiceEnd').addEventListener('click', () => { voiceTone(440); stopLiveVoice(); });
 $('#voiceMute').addEventListener('click', toggleVoiceMute);
