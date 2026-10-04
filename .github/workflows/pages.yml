@@ -7,6 +7,7 @@ on:
       - 'index.html'
       - 'app.css'
       - 'app.js'
+      - 'pcm-capture.js'
       - 'manifest.webmanifest'
       - 'sw.js'
       - 'worker/src/**'
@@ -46,7 +47,7 @@ jobs:
       - name: Stage static app files
         run: |
           mkdir -p _site/icons
-          cp index.html app.css app.js manifest.webmanifest sw.js _site/
+          cp index.html app.css app.js pcm-capture.js manifest.webmanifest sw.js _site/
           cp icons/bard.svg icons/bard-512.png _site/icons/
           touch _site/.nojekyll
       - name: Upload static app
