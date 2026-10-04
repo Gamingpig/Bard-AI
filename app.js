@@ -90,7 +90,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, visualStream: null, visualType: '', visualTimer: null, visualBusy: false, previewTranscriptEntry: null, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, outputActive: false, deferredInputAudio: [], deferredInputSamples: 0, deferredInputSpeech: false, deferredInputQuietFrames: 0, deferredInputPreRoll: [], flushingDeferredInput: false, turnUser: '', turnAssistant: '', pendingPreview: null, visualStream: null, visualType: '', visualTimer: null, visualBusy: false, previewTranscriptEntry: null, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -946,6 +946,87 @@ function decodePcm16(base64) {
   }
   return samples;
 }
+function sendVoiceAudioSamples(samples, socket = state.voice.socket) {
+  if (!samples?.length || !socket || socket.readyState !== WebSocket.OPEN) return false;
+  try {
+    const data = encodePcm16(samples);
+    socket.send(JSON.stringify({ realtimeInput: { audio: { data, mimeType: 'audio/pcm;rate=16000' } } }));
+    return true;
+  } catch { return false; }
+}
+function queueDeferredVoiceAudio(samples) {
+  const voice = state.voice;
+  if (!samples?.length) return;
+  let total = 0;
+  for (const sample of samples) total += sample * sample;
+  const rms = Math.sqrt(total / samples.length);
+  const copy = new Float32Array(samples);
+  const queue = chunk => {
+    voice.deferredInputAudio.push(chunk);
+    voice.deferredInputSamples += chunk.length;
+  };
+  if (rms >= 0.006) {
+    if (!voice.deferredInputSpeech) {
+      for (const chunk of voice.deferredInputPreRoll) queue(chunk);
+      voice.deferredInputPreRoll = [];
+      voice.deferredInputSpeech = true;
+    }
+    queue(copy);
+    voice.deferredInputQuietFrames = 0;
+  } else if (voice.deferredInputSpeech) {
+    queue(copy);
+    voice.deferredInputQuietFrames++;
+    if (voice.deferredInputQuietFrames >= 14) {
+      voice.deferredInputSpeech = false;
+      voice.deferredInputQuietFrames = 0;
+      voice.deferredInputPreRoll = [];
+    }
+  } else {
+    voice.deferredInputPreRoll.push(copy);
+    if (voice.deferredInputPreRoll.length > 4) voice.deferredInputPreRoll.shift();
+  }
+  const maxSamples = 16000 * 20;
+  while (voice.deferredInputSamples > maxSamples && voice.deferredInputAudio.length) {
+    voice.deferredInputSamples -= voice.deferredInputAudio.shift().length;
+  }
+}
+async function flushDeferredVoiceAudio() {
+  const voice = state.voice;
+  if (!voice.active || voice.flushingDeferredInput || !voice.deferredInputAudio.length) return;
+  const socket = voice.socket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  voice.flushingDeferredInput = true;
+  voiceState('thinking', 'Frage wird übernommen', 'Ich sende deine Zwischenfrage nach meiner Antwort.');
+  try {
+    while (voice.active && socket === voice.socket && socket.readyState === WebSocket.OPEN && voice.deferredInputAudio.length) {
+      const samples = voice.deferredInputAudio.shift();
+      voice.deferredInputSamples = Math.max(0, voice.deferredInputSamples - samples.length);
+      if (!sendVoiceAudioSamples(samples, socket)) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(60, samples.length / 16000 * 1000)));
+    }
+  } finally {
+    voice.flushingDeferredInput = false;
+    if (!voice.active || socket !== voice.socket || socket.readyState !== WebSocket.OPEN) {
+      voice.deferredInputAudio = [];
+      voice.deferredInputSamples = 0;
+    } else if (voice.deferredInputAudio.length) {
+      void flushDeferredVoiceAudio();
+    } else {
+      voice.deferredInputSpeech = false;
+      voice.deferredInputQuietFrames = 0;
+      voice.deferredInputPreRoll = [];
+      voiceState('listening', 'Ich höre zu', 'Du kannst jederzeit weitersprechen.');
+    }
+  }
+}
+function clearDeferredVoiceAudio() {
+  const voice = state.voice;
+  voice.deferredInputAudio = [];
+  voice.deferredInputSamples = 0;
+  voice.deferredInputSpeech = false;
+  voice.deferredInputQuietFrames = 0;
+  voice.deferredInputPreRoll = [];
+}
 function stopVoicePlayback() {
   const voice = state.voice;
   for (const source of voice.sources) { try { source.stop(); } catch {} }
@@ -969,7 +1050,8 @@ function playVoiceAudio(base64) {
     voice.sources.delete(source);
     if (!voice.sources.size && voice.pendingTurnComplete && state.voice.active) {
       voice.pendingTurnComplete = false;
-      voiceState('listening', 'Ich höre zu', 'Du kannst jederzeit weitersprechen.');
+      voice.outputActive = false;
+      void flushDeferredVoiceAudio();
     }
   };
   source.start(start);
@@ -1100,16 +1182,18 @@ function handleVoiceMessage(message) {
       if (shortName) captureConversationMemory(shortName[1]);
     }
   }
-  if (output) appendCaption('assistant', output);
+  if (output) { voice.outputActive = true; appendCaption('assistant', output); }
   if (content.interrupted) {
-    stopVoicePlayback(); voice.pendingTurnComplete = false;
+    stopVoicePlayback(); voice.pendingTurnComplete = false; voice.outputActive = false;
     voiceState('listening', 'Ich höre zu', 'Sag einfach weiter — ich bin bei dir.');
+    void flushDeferredVoiceAudio();
   }
   const parts = content.modelTurn?.parts || content.model_turn?.parts || [];
   for (const part of parts) {
     const inline = part.inlineData || part.inline_data;
     if (inline?.data) {
-      voiceState('speaking', 'Bard AI spricht', 'Du kannst mich jederzeit unterbrechen.');
+      voice.outputActive = true;
+      voiceState('speaking', 'Bard AI spricht', 'Sprich ruhig weiter — ich höre deine Frage und antworte danach.');
       playVoiceAudio(inline.data);
     }
   }
@@ -1118,7 +1202,8 @@ function handleVoiceMessage(message) {
     voice.pendingTurnComplete = true;
     if (!voice.sources.size) {
       voice.pendingTurnComplete = false;
-      voiceState('listening', 'Ich höre zu', 'Du kannst jederzeit weitersprechen.');
+      voice.outputActive = false;
+      void flushDeferredVoiceAudio();
     }
   } else if ((content.inputTranscription || content.input_transcription) && !parts.length) {
     voiceState('thinking', 'Ich denke nach', 'Ich habe dich gehört und formuliere eine Antwort.');
@@ -1134,8 +1219,15 @@ async function startVoiceCapture() {
   const silent = ctx.createGain(); silent.gain.value = 0;
   processor.port.onmessage = event => {
     if (!state.voice.active || state.voice.muted || !voice.socket || voice.socket.readyState !== WebSocket.OPEN) return;
-    const data = encodePcm16(new Float32Array(event.data));
-    voice.socket.send(JSON.stringify({ realtimeInput: { audio: { data, mimeType: 'audio/pcm;rate=16000' } } }));
+    const samples = new Float32Array(event.data);
+    if (voice.outputActive || voice.pendingTurnComplete || voice.sources.size || voice.flushingDeferredInput) {
+      queueDeferredVoiceAudio(samples);
+      return;
+    }
+    voice.deferredInputSpeech = false;
+    voice.deferredInputQuietFrames = 0;
+    voice.deferredInputPreRoll = [];
+    sendVoiceAudioSamples(samples, voice.socket);
   };
   source.connect(processor); processor.connect(silent); silent.connect(ctx.destination);
   voice.sourceNode = source; voice.processor = processor; voice.silentGain = silent;
@@ -1252,8 +1344,8 @@ async function startLiveVisualCapture(type) {
 function voiceFailure(message) {
   const voice = state.voice;
   if (!voice.active) return;
-  voice.active = false; voice.isReady = false;
-  stopVoiceCapture(); stopVoicePlayback();
+  voice.active = false; voice.isReady = false; voice.outputActive = false;
+  clearDeferredVoiceAudio(); stopVoiceCapture(); stopVoicePlayback();
   try { voice.socket?.close(); } catch {}
   voice.audioContext?.close().catch(() => {}); voice.audioContext = null;
   voice.socket = null;
@@ -1368,7 +1460,7 @@ async function startLiveVoice(keepDialog = false) {
   if (voice.active) return;
   if (!keepDialog && !$('#voiceDialog').open) $('#voiceDialog').showModal();
   voice.active = true; voice.muted = false; voice.intentionalClose = false; voice.isReady = false; voice.pendingTurnComplete = false; voice.turnUser = ''; voice.turnAssistant = ''; voice.pendingPreview = null;
-  voice.sources = new Set(); voice.nextPlayTime = 0;
+  voice.sources = new Set(); voice.nextPlayTime = 0; voice.outputActive = false; voice.flushingDeferredInput = false; clearDeferredVoiceAudio();
   $('#voiceRetry').classList.add('hidden'); $('#voiceMute').classList.remove('hidden');
   $('#voiceButton').classList.add('listening'); $('#voiceButton').lastElementChild.textContent = 'Live-Gespräch läuft';
   $('#voiceMute').setAttribute('aria-pressed', 'false');
@@ -1422,8 +1514,8 @@ async function startLiveVoice(keepDialog = false) {
 function stopLiveVoice(closeDialog = true) {
   const voice = state.voice;
   closeLivePreview();
-  voice.active = false; voice.intentionalClose = true; voice.isReady = false;
-  stopLiveVisualCapture(); stopVoiceCapture(); stopVoicePlayback();
+  voice.active = false; voice.intentionalClose = true; voice.isReady = false; voice.outputActive = false;
+  clearDeferredVoiceAudio(); stopLiveVisualCapture(); stopVoiceCapture(); stopVoicePlayback();
   if (voice.socket) { try { voice.socket.close(1000, 'User ended session'); } catch {} }
   voice.socket = null;
   voice.audioContext?.close().catch(() => {});
