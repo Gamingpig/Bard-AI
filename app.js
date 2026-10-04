@@ -161,8 +161,11 @@ function friendlyRequestError(status) {
 }
 function friendlyFailure(error, feature = 'text') {
   if (isProviderQuotaError(error)) return feature === 'voice'
-    ? 'Uups, der Sprachmodus ist kurz gestolpert. Versuch es bitte später noch einmal.'
-    : 'Hm, Bard AI ist gerade kurz gestolpert. Versuch es bitte später noch einmal.';
+    ? 'Der Sprachdienst ist gerade ausgelastet. Versuch es bitte später noch einmal.'
+    : 'Bard AI ist gerade ausgelastet. Deine Nachricht steht noch hier.';
+  if (feature === 'text' && error?.liveFailure === 'request') return 'Der Live-Kanal hat die Anfrage abgelehnt. Deine Nachricht steht noch hier; bitte lade Bard AI neu.';
+  if (feature === 'text' && error?.liveFailure === 'blocked') return 'Der Live-Kanal konnte diese Nachricht nicht verarbeiten. Deine Nachricht steht noch hier.';
+  if (feature === 'text' && error?.liveCloseCode) return `Der Live-Kanal wurde vor der Antwort mit Verbindungscode ${error.liveCloseCode} beendet. Deine Nachricht steht noch hier.`;
   if (!error?.status || error.status >= 500 || error.status === 408 || error.status === 504) return feature === 'voice'
     ? 'Uups, die Sprachverbindung ist kurz gestolpert. Versuch es bitte erneut.'
     : 'Uups, Bard AI ist gerade kurz gestolpert. Deine Nachricht steht noch hier – versuch es bitte gleich noch einmal.';
@@ -694,7 +697,11 @@ function liveTextExchange(session, prompt, audioContext) {
         return;
       }
       if (message.error?.message) {
-        finish(reject, new Error(String(message.error.message).slice(0, 600)));
+        const detail = String(message.error.message).slice(0, 600);
+        const error = new Error(detail);
+        if (/invalid.+payload|unknown name|cannot find field|invalid argument/i.test(detail)) error.liveFailure = 'request';
+        if (/safety|blocked|content filter|prohibited/i.test(detail)) error.liveFailure = 'blocked';
+        finish(reject, error);
         return;
       }
       const toolCall = message.toolCall || message.tool_call;
@@ -748,7 +755,11 @@ function liveTextExchange(session, prompt, audioContext) {
     };
     socket.onerror = () => finish(reject, new Error('Die Live-Verbindung für den Text-Chat ist fehlgeschlagen.'));
     socket.onclose = event => {
-      if (!settled) finish(reject, new Error(event.reason || 'Der Live-Kanal wurde vor der Antwort geschlossen (' + event.code + ').'));
+      if (!settled) {
+        const error = new Error(event.reason || 'Der Live-Kanal wurde vor der Antwort geschlossen.');
+        error.liveCloseCode = Number(event.code) || 0;
+        finish(reject, error);
+      }
     };
   });
 }
