@@ -295,6 +295,7 @@ async function restoreMessages() {
   resetConversationView();
   $('#currentChatTitle').textContent = chat.title || 'Neues Gespräch';
   for (const item of state.messages) renderMessage(item, false);
+  scrollConversationToBottom();
   if (state.messages.length) $('#welcome').classList.add('compact');
   if (!state.name) { $('#welcome').classList.add('needs-name'); $('#nameForm').classList.remove('hidden'); }
   await renderChatLibrary();
@@ -433,6 +434,14 @@ function addTextParts(parent, text) {
     parent.append(p);
   }
 }
+function scrollConversationToBottom() {
+  const conversation = $('.conversation');
+  if (!conversation) return;
+  requestAnimationFrame(() => {
+    conversation.scrollTop = conversation.scrollHeight;
+    requestAnimationFrame(() => { conversation.scrollTop = conversation.scrollHeight; });
+  });
+}
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
   const row = document.createElement('article');
@@ -452,10 +461,11 @@ function renderMessage(item, scroll = true) {
     const image = document.createElement('img');
     image.className = 'generated'; image.alt = item.image.alt || 'Von Bard AI generiertes Bild';
     image.src = `data:${item.image.mimeType};base64,${item.image.data}`;
+    image.addEventListener('load', scrollConversationToBottom, { once: true });
     bubble.append(image);
   }
   row.append(avatar, bubble); $('#messages').append(row);
-  if (scroll) row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  if (scroll) scrollConversationToBottom();
   return row;
 }
 function saveUserName(value) {
@@ -536,6 +546,7 @@ function appendAssistantReply(text) {
 function renderMessages() {
   const rows = $('#messages'); rows.replaceChildren();
   for (const item of state.messages) renderMessage(item, false);
+  scrollConversationToBottom();
 }
 
 
@@ -547,6 +558,7 @@ function typing(show) {
     const bubble = document.createElement('div'); bubble.className = 'bubble typing'; bubble.textContent = 'Bard denkt nach …';
     row.append(avatar, bubble); $('#messages').append(row);
   } else if (!show) row?.remove();
+  if (show) scrollConversationToBottom();
 }
 function requestsCodePreview(text) {
   const value = String(text || '').toLocaleLowerCase('de');
