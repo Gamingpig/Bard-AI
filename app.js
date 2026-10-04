@@ -837,7 +837,7 @@ async function requestLiveTextReply(text, codePreview = false) {
     } catch (error) {
       recordLiveModelResult(candidate.model, performance.now() - startedAt, false);
       lastError = error;
-      if (error?.failureKind === 'live-burst') break;
+      if (error?.failureKind === 'live-burst' || isProviderQuotaError(error)) break;
     }
   }
   audioContext?.close().catch(() => {});
@@ -863,7 +863,18 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
       const codePreview = !state.imageMode && requestsCodePreview(userMessage.text);
-      const result = await requestLiveTextReply(userMessage.text, codePreview);
+      let result;
+      try {
+        result = await requestLiveTextReply(userMessage.text, codePreview);
+      } catch (liveError) {
+        if (userMessage.text.length <= 1200 || !isProviderQuotaError(liveError)) throw liveError;
+        result = await requestWorker('/api/chat', {
+          messages: [{ role: 'user', text: userMessage.text }],
+          userName: state.name,
+          memory: state.memory,
+          context: buildLiveContext().slice(0, -1)
+        });
+      }
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (Array.isArray(result.audio) && result.audio.length) playLiveTextAudio(result.audio, result.audioContext);
