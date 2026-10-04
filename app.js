@@ -650,7 +650,7 @@ function liveTextExchange(session, prompt, audioContext) {
       for (const part of parts) {
         const inline = part.inlineData || part.inline_data;
         if (inline?.data) audio.push(inline.data);
-        if (typeof part.text === 'string') answerText = joinTranscriptText(answerText, part.text);
+        if (typeof part.text === 'string' && part.thought !== true && part.thought !== 'true') answerText = joinTranscriptText(answerText, part.text);
       }
       const grounding = content.groundingMetadata || content.grounding_metadata;
       if (grounding) {
