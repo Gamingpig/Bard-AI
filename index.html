@@ -72,20 +72,7 @@
         <div class="voice-orb" aria-hidden="true"><div class="voice-orb-aura"></div><div class="voice-orb-cloud cloud-one"></div><div class="voice-orb-cloud cloud-two"></div><div class="voice-orb-shine"></div><img src="icons/bard.svg" alt=""></div>
         <div class="voice-live-state"><span class="voice-state-pip"></span><span id="voiceStateLabel">Verbindung wird aufgebaut …</span></div>
         <p id="voiceStateHint" class="voice-state-hint">Einen Moment, ich richte den Live-Kanal ein.</p>
-        <div class="voice-media-tools">
-          <button id="voicePickerOpen" class="voice-picker-trigger" type="button"><span>Stimme</span><strong id="voiceSelectedLabel">Standard</strong><span aria-hidden="true">⌄</span></button>
-          <div class="visual-capture-controls" aria-label="Kamera und Bildschirm">
-            <select id="cameraSelect" aria-label="Kamera auswählen" disabled>
-              <option value="auto">Automatische Kamera</option>
-              <option value="facing:user">Vorderkamera / Selfie</option>
-              <option value="facing:environment">Rückkamera</option>
-            </select>
-            <button id="cameraToggle" class="visual-capture-button" type="button" aria-pressed="false" disabled><span aria-hidden="true">◎</span><span>Kamera</span></button>
-            <button id="screenToggle" class="visual-capture-button" type="button" aria-pressed="false" disabled><span aria-hidden="true">▣</span><span>Bildschirm teilen</span></button>
-          </div>
-          <p id="visualCaptureStatus" class="visual-capture-status" aria-live="polite">Kamera und Bildschirm werden nur nach deiner Auswahl übertragen.</p>
-          <video id="voiceVideoPreview" class="voice-video-preview hidden" autoplay muted playsinline></video>
-        </div>
+        <button id="voicePickerOpen" class="voice-picker-trigger" type="button"><span>Stimme</span><strong id="voiceSelectedLabel">Standard</strong><span aria-hidden="true">⌄</span></button>
         <section class="voice-transcript-panel" aria-label="Live-Transkript">
           <header class="voice-transcript-head"><strong>GESPRÄCH</strong><span><i></i> Live-Transkript</span></header>
           <div id="voiceTranscript" class="voice-captions" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Gesprächsverlauf"><p id="voiceTranscriptEmpty" class="voice-transcript-empty">Dein Gespräch erscheint hier, sobald ihr sprecht.</p></div>
