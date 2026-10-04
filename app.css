@@ -65,9 +65,9 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .welcome { max-width: 520px; margin: auto; padding: 26px 16px 38px; text-align: center; }
 .orb-wrap { position: relative; display: grid; place-items: center; width: 150px; height: 150px; margin: 0 auto 18px; }
 .orb-glow { position: absolute; inset: 14px; border-radius: 50%; background: linear-gradient(135deg, #40def9, #8972ff); filter: blur(34px); opacity: .3; animation: glow 5s ease-in-out infinite; }
-.orb { position: relative; display: grid; place-items: center; width: 90px; height: 90px; border-radius: 50%; background: radial-gradient(circle at 32% 26%, #415a8a 0, #172643 42%, #0b1121 76%); box-shadow: inset 0 1px 1px #ffffff7a, inset 0 -12px 24px #030611a6, 0 0 0 1px #a9deff40, 0 12px 45px #0007; animation: float 5.5s ease-in-out infinite; }
+.orb { position: relative; display: grid; place-items: center; width: 90px; height: 90px; border-radius: 50%; background: radial-gradient(circle at 32% 26%, #415a8a 0, #172643 42%, #0b1121 76%); box-shadow: inset 0 1px 1px #ffffff7a, inset 0 -12px 24px #030611a6, 0 0 0 1px #a9deff40, 0 12px 45px #0007; animation: orb-breathe 5.5s ease-in-out infinite; transform-origin: center; }
 .orb::before { position: absolute; inset: 2px; border-radius: inherit; background: linear-gradient(145deg, #ffffff3b, transparent 35%, #99aaff18 72%, transparent); content: ""; pointer-events: none; }
-.orb img { width: 42px; height: 42px; filter: drop-shadow(0 0 9px #5be8ffb0); animation: mark 6s ease-in-out infinite; }
+.orb img { position: absolute; top: 50%; left: 50%; width: 42px; height: 42px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 9px #5be8ffb0); animation: mark 6s ease-in-out infinite; }
 .orbit { position: absolute; inset: 10px; border: 1px solid transparent; border-top-color: #77eaff99; border-right-color: #aa8fff60; border-radius: 50%; transform: rotate(-35deg); animation: spin 9s linear infinite; }
 .orbit-b { inset: 20px; border-top-color: #b1a2ff70; border-right-color: transparent; border-bottom-color: #63deff36; transform: rotate(140deg); animation: spin-rev 13s linear infinite; }
 .eyebrow { color: var(--cyan); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
@@ -152,7 +152,7 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .notice { min-height: 14px; margin: 2px 8px; color: var(--muted); font-size: 10px; }
 .notice.error { color: var(--danger); }
 .hidden { display: none; }
-@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.025); } }
 @keyframes spin { to { transform: rotate(325deg); } }
 @keyframes spin-rev { to { transform: rotate(-220deg); } }
 @keyframes glow { 0%, 100% { opacity: .25; transform: scale(.9); } 50% { opacity: .44; transform: scale(1.08); } }
