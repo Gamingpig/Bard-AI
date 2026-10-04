@@ -100,6 +100,16 @@
     </div>
   </dialog>
 
+  <dialog id="livePreviewDialog" class="live-preview-dialog" aria-labelledby="livePreviewTitle">
+    <section class="live-preview-shell">
+      <header class="live-preview-header">
+        <div><span class="eyebrow">BARD AI · LIVE-VORSCHAU</span><strong id="livePreviewTitle">Neue Visualisierung</strong><span class="live-preview-hint">Neue Entwürfe aktualisieren dieses Fenster.</span></div>
+        <button id="livePreviewClose" class="voice-icon-button" type="button" aria-label="Vorschau schließen">×</button>
+      </header>
+      <iframe id="livePreviewFrame" class="live-preview-frame" title="Interaktive Bard AI Live-Vorschau" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+    </section>
+  </dialog>
+
   <dialog id="voicePickerDialog" class="voice-picker-dialog" aria-labelledby="voicePickerTitle">
     <section class="voice-picker-shell">
       <header class="voice-picker-header">
