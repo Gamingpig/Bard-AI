@@ -216,7 +216,7 @@ async function liveToken(request, env, cors) {
   if (!allowedLiveModels.has(normalizedSelectedModel)) throw new HttpError(400, 'Dieses Sprachmodell ist nicht freigegeben.');
   const modelName = 'models/' + normalizedSelectedModel;
   const userName = String(body.userName || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 60);
-  const memory = Array.isArray(body.memory) ? body.memory.slice(-12).map(item => String(item || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 180)).filter(Boolean) : [];
+  const memory = Array.isArray(body.memory) ? body.memory.slice(-24).map(item => String(item || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 180)).filter(Boolean) : [];
   const context = Array.isArray(body.context) ? body.context.slice(-12).map(item => {
     const role = item?.role === 'assistant' ? 'Bard AI' : 'Nutzer';
     const text = String(item?.text || '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').trim().slice(0, 1000);
