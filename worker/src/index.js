@@ -259,7 +259,7 @@ async function liveToken(request, env, cors) {
       uses: 1,
       expireTime: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
       newSessionExpireTime: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      liveConnectConstraints: { model: modelName, config: liveConfig }
+      bidiGenerateContentSetup: { model: modelName, ...liveConfig }
     }),
     signal: AbortSignal.timeout(20_000)
   });
