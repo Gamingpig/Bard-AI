@@ -203,3 +203,27 @@ test('fails closed when server secret is absent', async () => {
   assert.equal((await response.json()).error, 'Der Bard-Server ist noch nicht vollständig eingerichtet.');
 });
 
+
+ 
+test('retries text generation with the next supported model after provider quota or model errors', async () => {
+  const env = environment();
+  const originalFetch = globalThis.fetch;
+  const models = [];
+  globalThis.fetch = async (url) => {
+    models.push(String(url));
+    if (models.length === 1) return Response.json({ error: { message: 'rate limited' } }, { status: 429 });
+    return Response.json({ candidates: [{ content: { parts: [{ text: 'Alternative Antwort.' }] } }] });
+  };
+  try {
+    const response = await worker.fetch(request('/api/chat', {
+      method: 'POST',
+      body: { messages: [{ role: 'user', text: 'Hallo' }] }
+    }), env);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).text, 'Alternative Antwort.');
+    assert.match(models[0], /gemini-3\.8-flash:generateContent$/);
+    assert.match(models[1], /gemini-3\.7-flash:generateContent$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

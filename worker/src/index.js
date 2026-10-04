@@ -123,12 +123,25 @@ async function chat(request, env, cors) {
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
   const contents = messages.map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 12000) }] })).filter(item => item.parts[0].text.trim());
   if (!contents.length) throw new HttpError(400, 'Schreibe zuerst eine Nachricht.');
-  const data = await providerRequest(env, config, config.liveModel, {
+  const payload = {
     systemInstruction: { parts: [{ text: promptWithName(body.userName, body.memory, env, body.context) }] },
     contents,
     tools: [{ google_search: {} }],
     generationConfig: { responseModalities: ['TEXT'] }
-  });
+  };
+  const chatModels = [...new Set([config.liveModel, 'gemini-3.7-flash', 'gemini-3.6-flash'])];
+  let data;
+  let lastError;
+  for (const model of chatModels) {
+    try {
+      data = await providerRequest(env, config, model, payload);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (![404, 429, 502, 503].includes(error.status)) throw error;
+    }
+  }
+  if (!data) throw lastError || new HttpError(502, 'Bard AI ist gerade nicht erreichbar.');
   const text = (data.candidates?.[0]?.content?.parts || []).filter(part => typeof part.text === 'string').map(part => part.text).join('');
   const chunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks || data.candidates?.[0]?.grounding_metadata?.grounding_chunks || [];
   const sources = chunks.map(chunk => ({ title: String(chunk.web?.title || '').slice(0, 180), url: String(chunk.web?.uri || '') }))

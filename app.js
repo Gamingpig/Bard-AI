@@ -954,23 +954,20 @@ async function startLiveVoice(keepDialog = false) {
       voiceName: voice.voiceName,
       context: buildLiveContext()
     };
-    const result = await requestWorker('/api/live-token', tokenRequest);
-    if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
     const liveCandidates = [
-      result.model,
-      'models/gemini-3.8-live',
-      'models/gemini-3.1-flash-live-preview',
-      'models/gemini-2.5-flash-native-audio-preview-12-2025'
-    ].filter((model, index, models) => model && models.indexOf(model) === index);
+      { model: '', request: tokenRequest },
+      { model: 'models/gemini-3.1-flash-live-preview', request: { ...tokenRequest, model: 'models/gemini-3.1-flash-live-preview' } },
+      { model: 'models/gemini-2.5-flash-native-audio-preview-12-2025', request: { ...tokenRequest, model: 'models/gemini-2.5-flash-native-audio-preview-12-2025' } }
+    ];
     const connectionErrors = [];
     let connected = false;
     for (let index = 0; index < liveCandidates.length; index++) {
       if (!voice.active || voice.intentionalClose) break;
-      const model = liveCandidates[index];
+      const candidate = liveCandidates[index];
       try {
-        const session = index === 0 ? result : await requestWorker('/api/live-token', { ...tokenRequest, model });
-        if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
         if (index > 0) voiceState('connecting', 'Verbinde erneut', 'Ich suche eine verfügbare Sprachverbindung.');
+        const session = await requestWorker('/api/live-token', candidate.request);
+        if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
         await openLiveSocket(session, configureVoiceSession(session), session.model);
         if (index > 0) notice('Bard AI hat eine alternative Verbindung hergestellt.', false);
         connected = true;
