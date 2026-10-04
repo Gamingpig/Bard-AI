@@ -90,7 +90,7 @@ const dbPromise = new Promise((resolve, reject) => {
 const state = {
   imageMode: false,
   busy: false,
-  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, visualStream: null, visualType: '', visualTimer: null, visualBusy: false, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
+  voice: { active: false, muted: false, intentionalClose: false, isReady: false, sources: new Set(), nextPlayTime: 0, turnUser: '', turnAssistant: '', pendingPreview: null, visualStream: null, visualType: '', visualTimer: null, visualBusy: false, previewTranscriptEntry: null, voiceName: LIVE_VOICE_NAMES.has(readStored('bard_live_voice')) ? readStored('bard_live_voice') : 'Puck' },
   recognition: null,
   recognitionTimer: null,
   recognitionWatchdog: null,
@@ -992,6 +992,7 @@ function resetVoiceTranscript() {
   transcript.append(empty);
   state.voice.transcriptUserEntry = null;
   state.voice.transcriptAssistantEntry = null;
+  state.voice.previewTranscriptEntry = null;
 }
 function appendCaption(role, text) {
   const voice = state.voice;
@@ -1022,12 +1023,36 @@ function appendCaption(role, text) {
   }
   transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
 }
+function closeLivePreview() {
+  const dialog = $('#livePreviewDialog');
+  const frame = $('#livePreviewFrame');
+  if (dialog?.open) dialog.close();
+  if (frame) frame.src = 'about:blank';
+  state.voice.pendingPreview = null;
+}
+function openLivePreview(title, preview) {
+  const dialog = $('#livePreviewDialog');
+  const frame = $('#livePreviewFrame');
+  $('#livePreviewTitle').textContent = String(title || 'Neue Visualisierung').slice(0, 100);
+  const previewUrl = new URL(`./preview.html?live=${Date.now()}`, document.baseURI).href;
+  frame.addEventListener('load', () => {
+    if (!dialog.open || frame.src !== previewUrl) return;
+    frame.contentWindow?.postMessage({ type: 'bard-preview', html: preview.html }, '*');
+  }, { once: true });
+  if (!dialog.open) dialog.showModal();
+  frame.src = previewUrl;
+}
 function showLiveCodePreview(title, preview) {
+  openLivePreview(title, preview);
   const transcript = $('#voiceTranscript'); $('#voiceTranscriptEmpty')?.remove();
-  const entry = document.createElement('article'); entry.className = 'voice-transcript-entry assistant voice-preview-entry';
-  const speaker = document.createElement('span'); speaker.className = 'voice-transcript-speaker'; speaker.textContent = 'BARD AI';
-  const label = document.createElement('p'); label.className = 'voice-transcript-text'; label.textContent = `Vorschau · ${String(title || 'Neue Visualisierung').slice(0, 100)}`;
-  entry.append(speaker, label); renderCodePreview(entry, preview); transcript.append(entry);
+  let entry = state.voice.previewTranscriptEntry;
+  if (!entry?.isConnected) {
+    entry = document.createElement('article'); entry.className = 'voice-transcript-entry assistant voice-preview-entry';
+    const speaker = document.createElement('span'); speaker.className = 'voice-transcript-speaker'; speaker.textContent = 'BARD AI';
+    const label = document.createElement('p'); label.className = 'voice-transcript-text';
+    entry.append(speaker, label); transcript.append(entry); state.voice.previewTranscriptEntry = entry;
+  }
+  entry.querySelector('.voice-transcript-text').textContent = `Vorschau geöffnet/aktualisiert · ${String(title || 'Neue Visualisierung').slice(0, 100)}`;
   while (transcript.querySelectorAll('.voice-transcript-entry').length > 36) transcript.querySelector('.voice-transcript-entry')?.remove();
   transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
 }
@@ -1036,11 +1061,21 @@ async function handleLiveToolCall(toolCall) {
   for (const call of calls) {
     const name = String(call.name || ''); const args = call.args || {};
     if (name === 'show_web_preview') {
-      const html = typeof args.html === 'string' ? args.html : ''; const title = String(args.title || 'Neue Visualisierung').slice(0, 100);
+      const html = typeof args.html === 'string' ? args.html : '';
+      const title = String(args.title || 'Neue Visualisierung').slice(0, 100);
+      const action = String(args.action || '').toLowerCase();
+      const closeRequested = action === 'close' || (!html.trim() && /close|schlie|ausblend|hide/i.test(title));
+      if (closeRequested) {
+        closeLivePreview();
+        if (state.voice.previewTranscriptEntry?.isConnected) state.voice.previewTranscriptEntry.querySelector('.voice-transcript-text').textContent = 'Vorschau geschlossen.';
+        functionResponses.push({ id: call.id, name, response: { result: 'Die Live-Vorschau wurde geschlossen. Für eine neue Version rufe show_web_preview erneut mit einer vollständigen HTML-Datei auf.' } });
+        continue;
+      }
       const preview = html.length <= 10_000 ? previewMarkup('```html\n' + html + '\n```') : null;
       if (preview) {
-        state.voice.pendingPreview = { title, html }; showLiveCodePreview(title, preview);
-        functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wurde in der sicheren Live-Ansicht angezeigt.' } });
+        state.voice.pendingPreview = { title, html };
+        showLiveCodePreview(title, preview);
+        functionResponses.push({ id: call.id, name, response: { result: 'Die große Live-Vorschau wurde geöffnet oder aktualisiert. Für Änderungen rufe show_web_preview erneut auf; zum Schließen rufe es mit Titel „close“ und leerem HTML auf.' } });
       } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen. Erzeuge eine kleinere vollständige Vorschau.' } });
     } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
   }
@@ -1386,6 +1421,7 @@ async function startLiveVoice(keepDialog = false) {
 }
 function stopLiveVoice(closeDialog = true) {
   const voice = state.voice;
+  closeLivePreview();
   voice.active = false; voice.intentionalClose = true; voice.isReady = false;
   stopLiveVisualCapture(); stopVoiceCapture(); stopVoicePlayback();
   if (voice.socket) { try { voice.socket.close(1000, 'User ended session'); } catch {} }
@@ -1578,7 +1614,13 @@ $('#voicePickerDialog').addEventListener('close', stopVoicePreview);
 $('#voicePickerDialog').addEventListener('click', event => { if (event.target === $('#voicePickerDialog')) $('#voicePickerDialog').close(); });
 $('#voiceRetry').addEventListener('click', () => { stopLiveVoice(false); void startLiveVoice(true); });
 $('#voiceDialog').addEventListener('cancel', event => { event.preventDefault(); stopLiveVoice(); });
-$('#voiceDialog').addEventListener('close', () => { if (state.voice.active) stopLiveVoice(false); });
+$('#voiceDialog').addEventListener('close', () => { closeLivePreview(); if (state.voice.active) stopLiveVoice(false); });
+$('#livePreviewClose').addEventListener('click', () => {
+  closeLivePreview();
+  if (state.voice.previewTranscriptEntry?.isConnected) state.voice.previewTranscriptEntry.querySelector('.voice-transcript-text').textContent = 'Vorschau geschlossen.';
+});
+$('#livePreviewDialog').addEventListener('cancel', event => { event.preventDefault(); closeLivePreview(); });
+$('#livePreviewDialog').addEventListener('click', event => { if (event.target === $('#livePreviewDialog')) closeLivePreview(); });
 
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
