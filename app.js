@@ -392,9 +392,15 @@ function previewMarkup(text) {
   if (!match) return null;
   const source = match[2].trim();
   if (!source || source.length > 100_000) return null;
-  const html = match[1].toLowerCase() === 'svg'
-    ? `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020">${source}</body></html>`
+  let html = match[1].toLowerCase() === 'svg'
+    ? `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020">${source}</body></html>`
     : source;
+  if (!/<meta\\b[^>]*name=["']viewport["']/i.test(html)) {
+    const viewport = '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">';
+    if (/<head\\b[^>]*>/i.test(html)) html = html.replace(/<head\\b[^>]*>/i, match => match + viewport);
+    else if (/<html\\b[^>]*>/i.test(html)) html = html.replace(/<html\\b[^>]*>/i, match => match + '<head>' + viewport + '</head>');
+    else html = `<!doctype html><html lang="de"><head><meta charset="utf-8">${viewport}</head><body>${html}</body></html>`;
+  }
   return { source, html, block: match[0] };
 }
 function renderCodePreview(parent, preview) {
