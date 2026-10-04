@@ -134,15 +134,15 @@ function notice(message = '', error = false) {
   element.classList.toggle('error', error);
 }
 function friendlyRequestError(status) {
-  if (status === 429) return 'Die Nutzung ist gerade ausgelastet. Versuch es bitte später noch einmal.';
+  if (status === 429) return 'Hm, gerade klappt das nicht. Versuch es bitte später noch einmal.';
   if (status === 408 || status === 504) return 'Das dauert gerade länger als erwartet. Versuch es bitte gleich noch einmal.';
   if (!status || status >= 500) return 'Uups, Bard AI ist gerade nicht erreichbar. Versuch es bitte gleich noch einmal.';
   return 'Hm, Bard AI konnte darauf gerade nicht antworten. Versuch es bitte noch einmal.';
 }
 function friendlyFailure(error, feature = 'text') {
   if (isProviderQuotaError(error)) return feature === 'voice'
-    ? 'Der Sprachmodus ist gerade ausgelastet. Warte kurz und versuch es später erneut.'
-    : 'Die Antwortfunktion ist gerade ausgelastet. Versuch es später noch einmal.';
+    ? 'Uups, der Sprachmodus ist kurz gestolpert. Versuch es bitte später noch einmal.'
+    : 'Hm, Bard AI ist gerade kurz gestolpert. Versuch es bitte später noch einmal.';
   if (!error?.status || error.status >= 500 || error.status === 408 || error.status === 504) return feature === 'voice'
     ? 'Uups, die Sprachverbindung ist kurz gestolpert. Versuch es bitte erneut.'
     : 'Uups, Bard AI ist gerade kurz gestolpert. Deine Nachricht steht noch hier – versuch es bitte gleich noch einmal.';
