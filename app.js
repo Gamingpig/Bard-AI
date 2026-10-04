@@ -527,6 +527,12 @@ function captureConversationMemory(text) {
   if (stableFact?.[1]) changed = remember(stableFact[1] + ' ' + stableFact[2]) || changed;
   return changed;
 }
+function appendAssistantReply(text) {
+  const message = { id: crypto.randomUUID(), role: 'assistant', text: safeText(text), created: Date.now() };
+  state.messages.push(message);
+  renderMessage(message);
+  void persistMessages().catch(() => {});
+}
 function renderMessages() {
   const rows = $('#messages'); rows.replaceChildren();
   for (const item of state.messages) renderMessage(item, false);
@@ -579,7 +585,8 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
     setConnection('online', 'Verbunden');
   } catch (error) {
     setConnection('offline', 'Kurz getrennt');
-    notice(friendlyFailure(error), false);
+    notice('');
+    appendAssistantReply(friendlyFailure(error));
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
     typing(false); state.busy = false;
@@ -821,6 +828,9 @@ function voiceFailure(message) {
   const detail = message || 'Der Live-Sprachkanal konnte nicht gestartet werden.';
   const userMessage = friendlyFailure({ message: detail }, 'voice');
   voiceState('error', 'Verbindung unterbrochen', userMessage);
+  if (voice.turnUser.trim() || voice.turnAssistant.trim()) {
+    void saveVoiceTurn().catch(() => {}).finally(() => appendAssistantReply(userMessage));
+  } else appendAssistantReply(userMessage);
   $('#voiceRetry').classList.remove('hidden');
   $('#voiceMute').classList.add('hidden');
 }
@@ -948,9 +958,9 @@ async function startLiveVoice(keepDialog = false) {
     if (!result.token || !result.model || !result.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt. Bitte aktualisiere den Worker.');
     const liveCandidates = [
       result.model,
-      'models/gemini-2.0-flash-live-001',
-      'models/gemini-2.5-flash-native-audio',
-      'models/gemini-3.1-flash-live-preview'
+      'models/gemini-3.8-live',
+      'models/gemini-3.1-flash-live-preview',
+      'models/gemini-2.5-flash-native-audio-preview-12-2025'
     ].filter((model, index, models) => model && models.indexOf(model) === index);
     const connectionErrors = [];
     let connected = false;
@@ -958,10 +968,10 @@ async function startLiveVoice(keepDialog = false) {
       if (!voice.active || voice.intentionalClose) break;
       const model = liveCandidates[index];
       try {
-        const session = index === 0 ? result : await requestWorker('/api/live-token', tokenRequest);
-        if (!session.token || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
+        const session = index === 0 ? result : await requestWorker('/api/live-token', { ...tokenRequest, model });
+        if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
         if (index > 0) voiceState('connecting', 'Verbinde erneut', 'Ich suche eine verfügbare Sprachverbindung.');
-        await openLiveSocket(session, configureVoiceSession(session), model);
+        await openLiveSocket(session, configureVoiceSession(session), session.model);
         if (index > 0) notice('Bard AI hat eine alternative Verbindung hergestellt.', false);
         connected = true;
         break;
