@@ -93,3 +93,48 @@ test('stores credentials encrypted, returns no key, and allows limited chat/imag
   }
 });
 
+
+
+test('issues model-bound ephemeral Live tokens for supported fallback models', async () => {
+  const env = environment();
+  const originalFetch = globalThis.fetch;
+  const providerCalls = [];
+  globalThis.fetch = async (url, options) => {
+    providerCalls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
+    return Response.json({ name: 'temporary-live-token' });
+  };
+  try {
+    const login = await worker.fetch(request('/api/admin/login', { method: 'POST', body: { password: env.ADMIN_PASSWORD } }), env);
+    const { accessToken } = await login.json();
+    const save = await worker.fetch(request('/api/admin/config', {
+      method: 'PUT', token: accessToken,
+      body: { liveModel: 'private/live-model', imageModel: 'private/image-model', apiKey }
+    }), env);
+    assert.equal(save.status, 200);
+
+    const live = await worker.fetch(request('/api/live-token', {
+      method: 'POST',
+      body: { model: 'gemini-3.8-live', userName: 'Alex', voiceName: 'Puck', memory: ['mag Weltraum'], context: [{ role: 'user', text: 'Hallo' }] }
+    }), env);
+    assert.equal(live.status, 200);
+    const payload = await live.json();
+    assert.equal(payload.token, 'temporary-live-token');
+    assert.equal(payload.model, 'models/gemini-3.8-live');
+    assert.equal('apiKey' in payload, false);
+    assert.equal(providerCalls[0].url, 'https://provider.example/v1beta/auth_tokens');
+    assert.equal(providerCalls[0].headers['x-goog-api-key'], apiKey);
+    assert.equal(providerCalls[0].body.liveConnectConstraints.model, 'models/gemini-3.8-live');
+    assert.equal(providerCalls[0].body.liveConnectConstraints.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Puck');
+    assert.match(providerCalls[0].body.liveConnectConstraints.config.systemInstruction.parts[0].text, /Gewünschte Anrede: "Alex"/);
+    assert.match(providerCalls[0].body.liveConnectConstraints.config.systemInstruction.parts[0].text, /mag Weltraum/);
+    assert.match(providerCalls[0].body.liveConnectConstraints.config.systemInstruction.parts[0].text, /Nutzer: Hallo/);
+
+    const rejected = await worker.fetch(request('/api/live-token', {
+      method: 'POST', body: { model: 'models/private/not-allowed' }
+    }), env);
+    assert.equal(rejected.status, 400);
+    assert.equal(providerCalls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
