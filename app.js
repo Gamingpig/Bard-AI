@@ -581,7 +581,7 @@ function liveTextExchange(session, prompt, audioContext) {
     const socket = new WebSocket(socketUrl);
     socket.binaryType = 'arraybuffer';
     let settled = false, setupReady = false, submitted = false;
-    let answerText = '', previewHtml = '', searchSuggestion = '';
+    let answerText = '', previewHtml = '', searchSuggestion = '', toolUsed = false;
     const audio = [], sources = [];
     const timeout = setTimeout(() => finish(reject, new Error('Die Live-Textantwort dauerte zu lange.')), 90000);
     function finish(callback, value) {
@@ -626,6 +626,7 @@ function liveTextExchange(session, prompt, audioContext) {
       const toolCall = message.toolCall || message.tool_call;
       const calls = toolCall?.functionCalls || toolCall?.function_calls || [];
       if (calls.length && socket.readyState === WebSocket.OPEN) {
+        toolUsed = true;
         const functionResponses = [];
         for (const call of calls) {
           const name = String(call.name || ''), args = call.args || {};
@@ -661,7 +662,10 @@ function liveTextExchange(session, prompt, audioContext) {
         }
         searchSuggestion = String(grounding.searchEntryPoint?.renderedContent || grounding.search_entry_point?.rendered_content || '').slice(0, 24000);
       }
-      if (content.turnComplete || content.turn_complete) {
+      const generationComplete = content.generationComplete || content.generation_complete;
+      const turnComplete = content.turnComplete || content.turn_complete;
+      // Show plain answers as soon as generation ends; turnComplete may wait for audio playback.
+      if ((generationComplete && !toolUsed) || turnComplete) {
         let text = answerText.trim();
         if (previewHtml) text += (text ? '\n\n' : '') + String.fromCharCode(96).repeat(3) + 'html\n' + previewHtml + '\n' + String.fromCharCode(96).repeat(3);
         if (!text) { finish(reject, new Error('Der Live-Kanal hat keine Textantwort geliefert.')); return; }
