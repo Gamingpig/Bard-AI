@@ -678,6 +678,40 @@ function liveTextExchange(session, prompt, audioContext) {
     };
   });
 }
+const LIVE_MODEL_ORDER = [
+  'models/gemini-3.8-live',
+  'models/gemini-3.1-flash-live-preview',
+  'models/gemini-2.5-flash-native-audio-preview-12-2025'
+];
+function readLiveModelStats() {
+  try {
+    const value = JSON.parse(readStored('bard_live_model_stats') || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+}
+function liveModelOrder() {
+  const stats = readLiveModelStats();
+  const measured = LIVE_MODEL_ORDER.map(model => {
+    const row = stats[model];
+    const times = Array.isArray(row?.times) ? row.times.filter(value => Number.isFinite(value) && value > 0).slice(-5) : [];
+    if (!times.length) return null;
+    const average = times.reduce((sum, value) => sum + value, 0) / times.length;
+    const failures = Math.min(20, Math.max(0, Number(row.failures) || 0));
+    return { model, score: average * (1 + failures / times.length) };
+  }).filter(Boolean).sort((left, right) => left.score - right.score).map(row => row.model);
+  return [...measured, ...LIVE_MODEL_ORDER.filter(model => !measured.includes(model))];
+}
+function recordLiveModelResult(model, elapsed, succeeded) {
+  if (!LIVE_MODEL_ORDER.includes(model)) return;
+  const stats = readLiveModelStats();
+  const row = stats[model] && typeof stats[model] === 'object' ? stats[model] : { times: [], failures: 0 };
+  row.times = Array.isArray(row.times) ? row.times.filter(value => Number.isFinite(value) && value > 0).slice(-5) : [];
+  row.failures = Math.min(20, Math.max(0, Number(row.failures) || 0));
+  if (succeeded) row.times.push(Math.max(1, Math.round(elapsed)));
+  else row.failures += 1;
+  stats[model] = row;
+  writeStored('bard_live_model_stats', JSON.stringify(stats));
+}
 async function requestLiveTextReply(text, codePreview = false) {
   let audioContext;
   try {
@@ -694,18 +728,20 @@ async function requestLiveTextReply(text, codePreview = false) {
     voiceName: state.voice.voiceName || 'Puck',
     context: buildLiveContext().slice(0, -1)
   };
-  const candidates = [
-    tokenRequest,
-    { ...tokenRequest, model: 'models/gemini-3.1-flash-live-preview' },
-    { ...tokenRequest, model: 'models/gemini-2.5-flash-native-audio-preview-12-2025' }
-  ];
+  const candidates = liveModelOrder().map(model => ({ ...tokenRequest, model }));
   let lastError;
   for (const candidate of candidates) {
+    const startedAt = performance.now();
     try {
       const session = await requestWorker('/api/live-token', candidate);
       if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
-      return await liveTextExchange(session, livePrompt, audioContext);
-    } catch (error) { lastError = error; }
+      const result = await liveTextExchange(session, livePrompt, audioContext);
+      recordLiveModelResult(session.model, performance.now() - startedAt, true);
+      return result;
+    } catch (error) {
+      recordLiveModelResult(candidate.model, performance.now() - startedAt, false);
+      lastError = error;
+    }
   }
   audioContext?.close().catch(() => {});
   throw lastError || new Error('Der Live-Text-Chat ist gerade nicht erreichbar.');
@@ -1108,25 +1144,24 @@ async function startLiveVoice(keepDialog = false) {
       voiceName: voice.voiceName,
       context: buildLiveContext()
     };
-    const liveCandidates = [
-      { model: '', request: tokenRequest },
-      { model: 'models/gemini-3.1-flash-live-preview', request: { ...tokenRequest, model: 'models/gemini-3.1-flash-live-preview' } },
-      { model: 'models/gemini-2.5-flash-native-audio-preview-12-2025', request: { ...tokenRequest, model: 'models/gemini-2.5-flash-native-audio-preview-12-2025' } }
-    ];
+    const liveCandidates = liveModelOrder().map(model => ({ model, request: { ...tokenRequest, model } }));
     const connectionErrors = [];
     let connected = false;
     for (let index = 0; index < liveCandidates.length; index++) {
       if (!voice.active || voice.intentionalClose) break;
       const candidate = liveCandidates[index];
+      const startedAt = performance.now();
       try {
         if (index > 0) voiceState('connecting', 'Verbinde erneut', 'Ich suche eine verfügbare Sprachverbindung.');
         const session = await requestWorker('/api/live-token', candidate.request);
         if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
         await openLiveSocket(session, configureVoiceSession(session), session.model);
+        recordLiveModelResult(session.model, performance.now() - startedAt, true);
         if (index > 0) notice('Bard AI hat eine alternative Verbindung hergestellt.', false);
         connected = true;
         break;
       } catch (error) {
+        recordLiveModelResult(candidate.model, performance.now() - startedAt, false);
         connectionErrors.push(error);
       }
     }
