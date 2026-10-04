@@ -688,6 +688,7 @@ async function requestLiveTextReply(text, codePreview = false) {
     ? text + '\n\nErstelle eine eigenständige, sofort lauffähige HTML-Vorschau mit CSS und JavaScript direkt in der Datei. Verwende keine externen Dateien oder Netzwerkzugriffe. Erzeuge Grafiken mit inline-SVG, Canvas oder CSS. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung.'
     : text;
   const tokenRequest = {
+    responseMode: codePreview ? 'creative' : 'concise',
     userName: state.name,
     memory: state.memory,
     voiceName: state.voice.voiceName || 'Puck',
