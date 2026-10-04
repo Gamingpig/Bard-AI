@@ -9,6 +9,9 @@ on:
       - 'app.js'
       - 'manifest.webmanifest'
       - 'sw.js'
+      - 'worker/src/**'
+      - 'worker/test/**'
+      - 'worker/package.json'
       - 'icons/bard.svg'
       - 'icons/bard-512.png'
       - '.github/workflows/pages.yml'
@@ -36,6 +39,10 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Check Worker source and tests
+        run: |
+          node --check worker/src/index.js
+          npm --prefix worker test
       - name: Stage static app files
         run: |
           mkdir -p _site/icons
