@@ -812,12 +812,17 @@ async function requestLiveTextReply(text, codePreview = false) {
   const livePrompt = codePreview
     ? text + '\n\nErstelle eine eigenständige, sofort lauffähige HTML-Vorschau mit CSS und JavaScript direkt in der Datei. Verwende keine externen Dateien oder Netzwerkzugriffe. Erzeuge Grafiken mit inline-SVG, Canvas oder CSS. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung.'
     : text;
+  const fullContext = buildLiveContext().slice(0, -1);
+  // Long prompts get compact recent context to keep their input-token footprint lower.
+  const requestContext = text.length > 1200
+    ? fullContext.slice(-2).map(item => ({ ...item, text: String(item.text || '').slice(-400) }))
+    : fullContext;
   const tokenRequest = {
     responseMode: codePreview ? 'creative' : 'concise',
     userName: state.name,
     memory: state.memory,
     voiceName: state.voice.voiceName || 'Puck',
-    context: buildLiveContext().slice(0, -1)
+    context: requestContext
   };
   const candidates = liveModelOrder().map(model => ({ ...tokenRequest, model }));
   let lastError;
