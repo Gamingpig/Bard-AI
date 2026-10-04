@@ -78,7 +78,7 @@ const state = {
   restartDelay: 350,
   installPrompt: null,
   name: readStored('bard_user_name') || '',
-  memory: (() => { try { const value = JSON.parse(readStored('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { return []; } })(),
+  memory: (() => { try { const value = JSON.parse(readStored('bard_memory') || '[]'); return Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-24) : []; } catch { return []; } })(),
   recentContext: (() => { try { const value = JSON.parse(readStored('bard_recent_context') || '[]'); return Array.isArray(value) ? value.filter(item => item && typeof item.text === 'string').slice(-16) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: [],
@@ -209,7 +209,7 @@ function persistMessages() {
 function idbRequest(request) { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
 function persistProfile() {
   const name = state.name.trim().slice(0, 60);
-  const memory = state.memory.slice(-12);
+  const memory = state.memory.slice(-24);
   writeStored('bard_user_name', name);
   writeStored('bard_memory', JSON.stringify(memory));
   const record = { key: 'user', name, memory, updated: Date.now() };
@@ -228,8 +228,8 @@ async function restoreProfile() {
   if (storedName !== null) state.name = storedName.trim().slice(0, 60);
   else if (backup?.name) state.name = String(backup.name).trim().slice(0, 60);
   if (storedMemory !== null) {
-    try { const value = JSON.parse(storedMemory); state.memory = Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-12) : []; } catch { state.memory = []; }
-  } else if (Array.isArray(backup?.memory)) state.memory = backup.memory.filter(item => typeof item === 'string').slice(-12);
+    try { const value = JSON.parse(storedMemory); state.memory = Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-24) : []; } catch { state.memory = []; }
+  } else if (Array.isArray(backup?.memory)) state.memory = backup.memory.filter(item => typeof item === 'string').slice(-24);
   writeStored('bard_user_name', state.name);
   writeStored('bard_memory', JSON.stringify(state.memory));
   $('#userName').value = state.name;
@@ -504,11 +504,11 @@ function renderMemory() {
 }
 function remember(value) {
   const fact = String(value || '').replace(/[\s.!?]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
-  if (!fact) return false;
+  if (!fact || /\b(passw(?:ort|ord)|api[- ]?key|zugangsdaten|token|secret|cvv|pin)\b/i.test(fact)) return false;
   const key = fact.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const existing = state.memory.findIndex(item => item.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === key);
   if (existing >= 0) state.memory.splice(existing, 1);
-  state.memory = [...state.memory, fact].slice(-12);
+  state.memory = [...state.memory, fact].slice(-24);
   void persistProfile().catch(() => notice('Das Memory konnte nicht dauerhaft gespeichert werden.', true)); renderMemory();
   return true;
 }
@@ -520,10 +520,12 @@ function captureConversationMemory(text) {
   const normalized = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
   let changed = false;
-  const nameMatch = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bmein vorname ist|\bnenn mich|\bdu kannst mich nennen|\bich bin)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
+  const nameMatch = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bmein vorname ist|\bnenn mich|\bdu kannst mich nennen)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
   const invalidNames = new Set(['müde','muede','hungrig','durstig','krank','glücklich','gluecklich','traurig','bereit','gerade','ein','eine','am','im','nicht','nur','auch','heute','hier']);
-  if (nameMatch?.[1] && !invalidNames.has(nameMatch[1].toLocaleLowerCase('de')) && nameMatch[1] !== state.name) {
-    saveUserName(nameMatch[1]); changed = true;
+  const promptedName = !state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden')) ? normalized.match(/^ich bin\s+([\p{L}][\p{L}\p{M}'’-]{0,39})[.!]?$/iu) : null;
+  const candidateName = nameMatch?.[1] || promptedName?.[1];
+  if (candidateName && !invalidNames.has(candidateName.toLocaleLowerCase('de')) && candidateName !== state.name) {
+    saveUserName(candidateName); changed = true;
   } else if (!state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden'))) {
     const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu);
     const filler = new Set(['ja','nein','okay','ok','klar','hi','hallo','hey','test','bro','danke','ich','du','mich','dich','weiß','weiss']);
@@ -536,6 +538,8 @@ function captureConversationMemory(text) {
   const stableFactPatterns = [
     /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich wohne in|ich lebe in|ich komme aus|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study|i live in)\s+([^.!?\n]{2,140})/iu,
     /\b(mein(?:e|en)? lieblings(?:farbe|film|serie|spiel|musik|band|buch|essen|getränk|sport|verein)? ist)\s+([^.!?\n]{2,100})/iu,
+    /\b(ich bin allergisch gegen|ich vertrage|ich nehme regelmäßig|ich nehme täglich|meine diagnose ist|ich lebe mit|ich bin schwanger|mein geburtstag ist|ich bin)\s+([^.!?\n]{2,140})/iu,
+    /\b(meine adresse ist|meine telefonnummer ist|meine email(?:adresse)? ist|mein budget ist|mein einkommen ist|ich verdiene)\s+([^.!?\n]{2,140})/iu,
     /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu
   ];
   for (const pattern of stableFactPatterns) {
