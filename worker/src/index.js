@@ -122,7 +122,7 @@ async function chat(request, env, cors) {
   const config = await loadConfig(env); ensureConfigured(config);
   const body = await bodyJson(request, 250_000);
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40) : [];
-  const contents = messages.map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 12000) }] })).filter(item => item.parts[0].text.trim());
+  const contents = messages.map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.text || '').slice(0, 60000) }] })).filter(item => item.parts[0].text.trim());
   if (!contents.length) throw new HttpError(400, 'Schreibe zuerst eine Nachricht.');
   const payload = {
     systemInstruction: { parts: [{ text: promptWithName(body.userName, body.memory, env, body.context) }] },
