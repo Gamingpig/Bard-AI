@@ -143,11 +143,11 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
     assert.equal(JSON.stringify(data).includes(apiKey), false);
     assert.match(call.url, /\/v1beta\/auth_tokens$/);
     assert.equal(call.headers['x-goog-api-key'], apiKey);
-    assert.equal(call.body.authToken.uses, 1);
-    assert.equal(typeof call.body.authToken.newSessionExpireTime, 'string');
-    assert.equal(call.body.authToken.bidiGenerateContentSetup.model, data.model);
-    assert.equal(call.body.authToken.bidiGenerateContentSetup.generationConfig.responseModalities[0], 'AUDIO');
-    assert.equal('liveConnectConstraints' in call.body, false);
+    assert.equal(call.body.uses, 1);
+    assert.equal(typeof call.body.newSessionExpireTime, 'string');
+    assert.equal(call.body.liveConnectConstraints.model, data.model);
+    assert.equal(call.body.liveConnectConstraints.config.generationConfig.responseModalities[0], 'AUDIO');
+    assert.equal('authToken' in call.body, false);
     const instruction = data.config.systemInstruction.parts[0].text;
     assert.equal(data.model, 'models/gemini-3.8-live');
     assert.match(instruction, /Gespeicherter Name für die Anrede: "Mira"/);
