@@ -655,8 +655,21 @@ function liveTextExchange(session, prompt, audioContext) {
     function sendPrompt() {
       if (submitted || !setupReady) return;
       submitted = true;
-      try { socket.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: prompt }] }], turnComplete: true } })); }
-      catch { finish(reject, new Error('Die Textnachricht konnte nicht an den Live-Kanal gesendet werden.')); }
+      try {
+        const chunks = [];
+        let chunk = '';
+        for (const character of prompt) {
+          chunk += character;
+          if (chunk.length >= 8000) { chunks.push(chunk); chunk = ''; }
+        }
+        if (chunk || !chunks.length) chunks.push(chunk);
+        chunks.forEach((part, index) => socket.send(JSON.stringify({
+          clientContent: {
+            turns: [{ role: 'user', parts: [{ text: part }] }],
+            turnComplete: index === chunks.length - 1
+          }
+        })));
+      } catch { finish(reject, new Error('Die Textnachricht konnte nicht an den Live-Kanal gesendet werden.')); }
     }
     socket.onopen = () => {
       try { socket.send(JSON.stringify({ setup: { model: session.model, ...(session.config || {}) } })); }
@@ -1538,7 +1551,7 @@ $('#installButton').addEventListener('click', async () => { if (!state.installPr
 window.addEventListener('pagehide', () => stopLiveVoice(false));
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').then(registration => registration.update()).catch(() => {});
 
 
 
