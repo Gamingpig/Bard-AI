@@ -391,3 +391,45 @@ main { width: min(100%, 980px); min-height: 0; margin: auto; padding: 0 clamp(14
 .search-suggestion-frame { display: block; width: 100%; height: 170px; margin-top: 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-raised); }
 .voice-captions > .search-suggestion-frame { height: 150px; margin: 0 0 4px; }
 @media(max-width:600px) { .voice-preview-entry .generated-preview-frame { height: 36svh; min-height: 190px; } .search-suggestion-frame { height: 190px; } }
+
+
+/* Low-power mode keeps the interface responsive on constrained devices. */
+.low-power .orb-glow,
+.low-power .orb,
+.low-power .orb img,
+.low-power .orbit,
+.low-power .voice-orb,
+.low-power .voice-orb::before,
+.low-power .voice-orb::after,
+.low-power .voice-orb-cloud,
+.low-power .voice-orb-aura,
+.low-power .voice-orb img,
+.low-power .voice-scene::before,
+.low-power .voice-scene::after,
+.low-power .voice-state-pip {
+  animation: none !important;
+}
+.low-power .orb-glow,
+.low-power .voice-orb::before,
+.low-power .voice-orb::after,
+.low-power .voice-orb-cloud,
+.low-power .voice-orb-aura,
+.low-power .voice-scene::before,
+.low-power .voice-scene::after {
+  filter: none;
+}
+.page-hidden *,
+.page-hidden *::before,
+.page-hidden *::after {
+  animation-play-state: paused !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}
