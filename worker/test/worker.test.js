@@ -131,6 +131,7 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
       method: 'POST',
       body: {
         userName: 'Mira',
+        responseMode: 'concise',
         memory: ['mag Astrofotografie'],
         context: [{ role: 'user', text: 'Wir planen einen Ausflug.' }, { role: 'assistant', text: 'Gern!' }]
       }
@@ -140,6 +141,7 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
     assert.equal(data.token, 'authTokens/short-lived-test-token');
     assert.equal(data.model, 'models/gemini-3.8-live');
     assert.equal(data.config.generationConfig.responseModalities[0], 'AUDIO');
+    assert.equal(data.config.generationConfig.maxOutputTokens, 512);
     assert.equal(JSON.stringify(data).includes(apiKey), false);
     assert.match(call.url, /\/v1beta\/auth_tokens$/);
     assert.equal(call.headers['x-goog-api-key'], apiKey);
@@ -147,6 +149,7 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
     assert.equal(typeof call.body.newSessionExpireTime, 'string');
     assert.equal(call.body.bidiGenerateContentSetup.model, data.model);
     assert.equal(call.body.bidiGenerateContentSetup.generationConfig.responseModalities[0], 'AUDIO');
+    assert.equal(call.body.bidiGenerateContentSetup.generationConfig.maxOutputTokens, 512);
     assert.equal('liveConnectConstraints' in call.body, false);
     assert.equal('authToken' in call.body, false);
     const instruction = data.config.systemInstruction.parts[0].text;
@@ -155,10 +158,11 @@ test('creates one-use, short-lived Live tokens with the provider key kept server
     assert.match(instruction, /mag Astrofotografie/);
     assert.match(instruction, /Wir planen einen Ausflug/);
 
-    const fallbackResponse = await worker.fetch(request('/api/live-token', { method: 'POST', body: { model: 'gemini-3.1-flash-live-preview', userName: 'Mira', voiceName: 'Puck' } }), env);
+    const fallbackResponse = await worker.fetch(request('/api/live-token', { method: 'POST', body: { model: 'gemini-3.1-flash-live-preview', userName: 'Mira', voiceName: 'Puck', responseMode: 'creative' } }), env);
     assert.equal(fallbackResponse.status, 200);
     const fallback = await fallbackResponse.json();
     assert.equal(fallback.model, 'models/gemini-3.1-flash-live-preview');
+    assert.equal(fallback.config.generationConfig.maxOutputTokens, 4096);
     assert.deepEqual(data.config.tools[0], { googleSearch: {} });
     assert.equal(data.config.tools[1].functionDeclarations[0].name, 'show_web_preview');
     assert.equal([...env.SETTINGS.values.keys()].some(key => key.startsWith('guest:') && key.includes(':live:')), false);
