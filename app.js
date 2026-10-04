@@ -1,4 +1,13 @@
 const $ = selector => document.querySelector(selector);
+
+// Reduce visual work on constrained devices without interrupting media capture.
+const lowMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const lowHardware = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
+  || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+if (lowMotion || lowHardware) document.documentElement.classList.add('low-power');
+document.addEventListener('visibilitychange', () => {
+  document.documentElement.classList.toggle('page-hidden', document.hidden);
+}, { passive: true });
 function readStored(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function writeStored(key, value) { try { localStorage.setItem(key, value); return true; } catch { return false; } }
 const LIVE_VOICES = [
