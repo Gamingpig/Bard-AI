@@ -552,6 +552,160 @@ function requestsCodePreview(text) {
   const value = String(text || '').toLocaleLowerCase('de');
   return /\b(html|css|javascript|js|svg|canvas)\b|webseite|website|landing[- ]?page|prototyp|grafik|diagramm|visualisierung|animation|vorschau|dashboard/.test(value);
 }
+function playLiveTextAudio(chunks, context) {
+  if (!context || context.state !== 'running') { context?.close().catch(() => {}); return; }
+  let remaining = 0, nextTime = context.currentTime + 0.04;
+  for (const chunk of chunks) {
+    try {
+      const samples = decodePcm16(chunk);
+      if (!samples.length) continue;
+      const buffer = context.createBuffer(1, samples.length, 24000);
+      buffer.copyToChannel(samples, 0);
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      const gain = context.createGain();
+      gain.gain.value = 0.94;
+      source.connect(gain); gain.connect(context.destination);
+      const start = nextTime;
+      nextTime += buffer.duration;
+      remaining++;
+      source.onended = () => { if (--remaining === 0) context.close().catch(() => {}); };
+      source.start(start);
+    } catch {}
+  }
+  if (!remaining) context.close().catch(() => {});
+}
+function liveTextExchange(session, prompt, audioContext) {
+  return new Promise((resolve, reject) => {
+    const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(session.token);
+    const socket = new WebSocket(socketUrl);
+    socket.binaryType = 'arraybuffer';
+    let settled = false, setupReady = false, submitted = false;
+    let answerText = '', previewHtml = '', searchSuggestion = '';
+    const audio = [], sources = [];
+    const timeout = setTimeout(() => finish(reject, new Error('Die Live-Textantwort dauerte zu lange.')), 90000);
+    function finish(callback, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try { socket.close(1000, 'Textantwort abgeschlossen'); } catch {}
+      callback(value);
+    }
+    function sendPrompt() {
+      if (submitted || !setupReady) return;
+      submitted = true;
+      try { socket.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: prompt }] }], turnComplete: true } })); }
+      catch { finish(reject, new Error('Die Textnachricht konnte nicht an den Live-Kanal gesendet werden.')); }
+    }
+    socket.onopen = () => {
+      try { socket.send(JSON.stringify({ setup: { model: session.model, ...(session.config || {}) } })); }
+      catch { finish(reject, new Error('Die Live-Konfiguration konnte nicht gesendet werden.')); }
+    };
+    socket.onmessage = async event => {
+      let message;
+      try {
+        const data = event.data;
+        const raw = typeof data === 'string' ? data : data instanceof Blob ? await data.text()
+          : data instanceof ArrayBuffer ? new TextDecoder().decode(data)
+          : ArrayBuffer.isView(data) ? new TextDecoder().decode(data) : '';
+        if (!raw) throw new Error();
+        message = JSON.parse(raw);
+      } catch {
+        finish(reject, new Error('Die Live-Antwort hatte ein ungültiges Format.'));
+        return;
+      }
+      if (message.setupComplete || message.setup_complete) {
+        setupReady = true;
+        sendPrompt();
+        return;
+      }
+      if (message.error?.message) {
+        finish(reject, new Error(String(message.error.message).slice(0, 600)));
+        return;
+      }
+      const toolCall = message.toolCall || message.tool_call;
+      const calls = toolCall?.functionCalls || toolCall?.function_calls || [];
+      if (calls.length && socket.readyState === WebSocket.OPEN) {
+        const functionResponses = [];
+        for (const call of calls) {
+          const name = String(call.name || ''), args = call.args || {};
+          if (name === 'show_web_preview') {
+            const html = typeof args.html === 'string' ? args.html : '';
+            const fence = String.fromCharCode(96).repeat(3);
+            const preview = html.length <= 10_000 ? previewMarkup(fence + 'html\n' + html + '\n' + fence) : null;
+            if (preview) {
+              previewHtml = preview.source;
+              functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wird zusammen mit der Chat-Antwort angezeigt.' } });
+            } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen.' } });
+          } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
+        }
+        try { socket.send(JSON.stringify({ toolResponse: { functionResponses } })); }
+        catch { finish(reject, new Error('Die Live-Vorschau konnte nicht bestätigt werden.')); return; }
+      }
+      const content = message.serverContent || message.server_content;
+      if (!content) return;
+      const output = content.outputTranscription?.text || content.output_transcription?.text;
+      if (output) answerText = joinTranscriptText(answerText, output);
+      const parts = content.modelTurn?.parts || content.model_turn?.parts || [];
+      for (const part of parts) {
+        const inline = part.inlineData || part.inline_data;
+        if (inline?.data) audio.push(inline.data);
+        if (typeof part.text === 'string') answerText = joinTranscriptText(answerText, part.text);
+      }
+      const grounding = content.groundingMetadata || content.grounding_metadata;
+      if (grounding) {
+        const chunks = grounding.groundingChunks || grounding.grounding_chunks || [];
+        for (const chunk of chunks) {
+          const source = chunk.web || {};
+          if (source.title && /^https:\/\//i.test(String(source.uri || ''))) sources.push({ title: String(source.title).slice(0, 180), url: String(source.uri) });
+        }
+        searchSuggestion = String(grounding.searchEntryPoint?.renderedContent || grounding.search_entry_point?.rendered_content || '').slice(0, 24000);
+      }
+      if (content.turnComplete || content.turn_complete) {
+        let text = answerText.trim();
+        if (previewHtml) text += (text ? '\n\n' : '') + String.fromCharCode(96).repeat(3) + 'html\n' + previewHtml + '\n' + String.fromCharCode(96).repeat(3);
+        if (!text) { finish(reject, new Error('Der Live-Kanal hat keine Textantwort geliefert.')); return; }
+        finish(resolve, { text, audio, audioContext, sources: sources.slice(0, 8), searchSuggestion });
+      }
+    };
+    socket.onerror = () => finish(reject, new Error('Die Live-Verbindung für den Text-Chat ist fehlgeschlagen.'));
+    socket.onclose = event => {
+      if (!settled) finish(reject, new Error(event.reason || 'Der Live-Kanal wurde vor der Antwort geschlossen (' + event.code + ').'));
+    };
+  });
+}
+async function requestLiveTextReply(text, codePreview = false) {
+  let audioContext;
+  try {
+    audioContext = new AudioContext({ latencyHint: 'interactive' });
+    void audioContext.resume().catch(() => {});
+  } catch {}
+  const livePrompt = codePreview
+    ? text + '\n\nErstelle eine eigenständige, sofort lauffähige HTML-Vorschau mit CSS und JavaScript direkt in der Datei. Verwende keine externen Dateien oder Netzwerkzugriffe. Erzeuge Grafiken mit inline-SVG, Canvas oder CSS. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung.'
+    : text;
+  const tokenRequest = {
+    userName: state.name,
+    memory: state.memory,
+    voiceName: state.voice.voiceName || 'Puck',
+    context: buildLiveContext().slice(0, -1)
+  };
+  const candidates = [
+    tokenRequest,
+    { ...tokenRequest, model: 'models/gemini-3.1-flash-live-preview' },
+    { ...tokenRequest, model: 'models/gemini-2.5-flash-native-audio-preview-12-2025' }
+  ];
+  let lastError;
+  for (const candidate of candidates) {
+    try {
+      const session = await requestWorker('/api/live-token', candidate);
+      if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
+      return await liveTextExchange(session, livePrompt, audioContext);
+    } catch (error) { lastError = error; }
+  }
+  audioContext?.close().catch(() => {});
+  throw lastError || new Error('Der Live-Text-Chat ist gerade nicht erreichbar.');
+}
+
 async function submitPrompt(text = $('#prompt').value.trim()) {
   if (!text || state.busy) return;
   captureConversationMemory(text);
@@ -577,10 +731,11 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       if (codePreview && messages.length) {
         messages[messages.length - 1].text += '\n\nErstelle für diese Anfrage eine eigenständige, sofort lauffähige Vorschau als genau einen vollständigen ```html-Codeblock. Baue CSS und JavaScript direkt in diese HTML-Datei ein; verwende keine externen Dateien, Bibliotheken, Links oder Netzwerkzugriffe. Erzeuge gewünschte Grafiken direkt mit inline-SVG, Canvas oder CSS, ohne Bildgenerierungsmodell. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung. Die Vorschau ist isoliert und offline; behaupte keine echten Geräteaktionen.';
       }
-      const result = await requestWorker('/api/chat', { messages, userName: state.name, memory: state.memory, context: buildPreviousContext(), codePreview });
+      const result = await requestLiveTextReply(userMessage.text, codePreview);
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
-      if (state.speakReplies) speak(answer.text);
+      if (Array.isArray(result.audio) && result.audio.length) playLiveTextAudio(result.audio, result.audioContext);
+      else result.audioContext?.close().catch(() => {});
     }
     setConnection('online', 'Verbunden');
   } catch (error) {
