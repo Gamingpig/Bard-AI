@@ -175,7 +175,7 @@ function setConnection(value, label) {
   element.className = `connection ${value}`;
   element.lastChild.textContent = ` ${label}`;
 }
-function safeText(text) { return String(text || '').replace(/\u0000/g, '').slice(0, 12000); }
+function safeText(text) { return String(text || '').replace(/\u0000/g, '').slice(0, 60000); }
 function buildPreviousContext() {
   return state.recentContext.filter(item => item.chatId !== state.chatId).slice(-8).map(item => ({ role: item.role, text: item.text.slice(0, 1000) }));
 }
@@ -412,7 +412,7 @@ function renderCodePreview(parent, preview) {
   frame.title = 'Von Bard AI erstellte Code-Vorschau';
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.referrerPolicy = 'no-referrer';
-  frame.loading = 'lazy';
+  frame.loading = 'eager';
   frame.addEventListener('load', () => {
     frame.contentWindow?.postMessage({ type: 'bard-preview', html: preview.html }, '*');
   }, { once: true });
@@ -454,7 +454,7 @@ function renderSources(parent, sources) {
   section.append(summary, list); parent.append(section);
 }
 function addTextParts(parent, text) {
-  const paragraphs = String(text || '').split(/\n{2,}/).slice(0, 80);
+  const paragraphs = String(text || '').split(/\n{2,}/);
   for (const content of paragraphs) {
     if (!content.trim()) continue;
     const p = document.createElement('p');
@@ -638,7 +638,7 @@ function liveTextExchange(session, prompt, audioContext) {
     let settled = false, setupReady = false, submitted = false;
     let answerText = '', previewHtml = '', searchSuggestion = '', toolUsed = false;
     const audio = [], sources = [];
-    const timeout = setTimeout(() => finish(reject, new Error('Die Live-Textantwort dauerte zu lange.')), 90000);
+    const timeout = setTimeout(() => finish(reject, new Error('Die Live-Textantwort dauerte zu lange.')), 180000);
     function finish(callback, value) {
       if (settled) return;
       settled = true;
