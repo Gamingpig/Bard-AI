@@ -542,12 +542,14 @@ function captureConversationMemory(text) {
     /\b(meine adresse ist|meine telefonnummer ist|meine email(?:adresse)? ist|mein budget ist|mein einkommen ist|ich verdiene)\s+([^.!?\n]{2,140})/iu,
     /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu
   ];
+  const capturedFacts = new Set();
   for (const pattern of stableFactPatterns) {
     const match = normalized.match(pattern);
-    if (match) {
-      const fact = [match[1], match[2]].filter(Boolean).join(' ');
+    if (!match) continue;
+    const fact = [match[1], match[2]].filter(Boolean).join(' ');
+    if (fact && !capturedFacts.has(fact.toLocaleLowerCase('de'))) {
+      capturedFacts.add(fact.toLocaleLowerCase('de'));
       changed = remember(fact) || changed;
-      break;
     }
   }
   return changed;
