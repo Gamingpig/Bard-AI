@@ -35,10 +35,17 @@
 
       <footer class="composer-wrap">
         <div class="composer">
-          <button id="imageButton" class="tool-button" aria-label="Bild erstellen" title="Bild erstellen">＋</button>
+          <button id="imageButton" class="tool-button" type="button" aria-label="Anhänge oder Bildoptionen" title="Anhänge oder Bildoptionen">＋</button>
+          <button id="dictationButton" class="dictation-button" type="button" aria-pressed="false" aria-label="Sprache ins Textfeld diktieren" title="Sprache ins Textfeld diktieren"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 17v4m-4 0h8"/></svg></button>
           <textarea id="prompt" rows="1" maxlength="60000" placeholder="Frag Bard AI …" aria-label="Nachricht"></textarea>
           <button id="sendButton" class="send-button" aria-label="Senden" title="Senden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.2 21.2 22.5 12 2.2 2.8l.1 7.1 13.1 2.1-13.1 2.1z"/></svg><span>Senden</span></button>
         </div>
+        <input id="attachmentInput" class="hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif,.txt,.md,.csv,.json,.html,.css,.js,.xml,.log">
+        <div id="attachmentMenu" class="attachment-menu" role="menu" hidden>
+          <button id="chooseAttachmentButton" type="button" role="menuitem">📎 Foto oder Textdatei anhängen</button>
+          <button id="createImageButton" type="button" role="menuitem">✦ Bild erstellen</button>
+        </div>
+        <div id="attachmentPreview" class="attachment-preview" hidden></div>
         <div class="composer-tools"><button id="voiceButton" class="voice-button"><span class="mic-icon">●</span><span>Mit Stimme chatten</span></button><button id="voicePickerSettingsOpen" class="voice-settings-button" type="button" aria-haspopup="dialog" aria-controls="voicePickerDialog"><span aria-hidden="true">♫</span><span>Stimmen & Hörproben</span></button><span>Chats und Profil werden automatisch auf diesem Gerät gespeichert.</span><button id="installButton" class="install-button hidden">App installieren</button></div>
         <p id="notice" class="notice" role="status"></p>
       </footer>

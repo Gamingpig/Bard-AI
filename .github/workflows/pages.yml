@@ -25,7 +25,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -49,6 +49,11 @@ jobs:
           mkdir -p _site/icons
           cp index.html app.css app.js pcm-capture.js manifest.webmanifest sw.js _site/
           cp icons/bard.svg icons/bard-512.png _site/icons/
+          cp index.html _site/404.html
+          sed -i 's|<head>|<head><base href="/Bard-AI/">|' _site/404.html
+          test -s _site/index.html
+          test -s _site/pcm-capture.js
+          test -s _site/404.html
           touch _site/.nojekyll
       - name: Upload static app
         uses: actions/upload-pages-artifact@v3

@@ -102,7 +102,9 @@ const state = {
   recentContext: (() => { try { const value = JSON.parse(readStored('bard_recent_context') || '[]'); return Array.isArray(value) ? value.filter(item => item && typeof item.text === 'string').slice(-16) : []; } catch { return []; } })(),
   theme: localStorage.getItem('bard_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   messages: [],
-  chatId: readStored('bard_active_chat') || ''
+  chatId: readStored('bard_active_chat') || '',
+  pendingAttachment: null,
+  dictation: null
 };
 
 function applyTheme(theme, save = false) {
@@ -681,7 +683,7 @@ function playLiveTextAudio(chunks, context) {
   }
   if (!remaining) context.close().catch(() => {});
 }
-function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}) {
+function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}, imageAttachment = null) {
   return new Promise((resolve, reject) => {
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(session.token);
     const socket = new WebSocket(socketUrl);
@@ -710,7 +712,7 @@ function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}) {
         if (chunk || !chunks.length) chunks.push(chunk);
         chunks.forEach((part, index) => socket.send(JSON.stringify({
           clientContent: {
-            turns: [{ role: 'user', parts: [{ text: part }] }],
+            turns: [{ role: 'user', parts: [{ text: part }, ...(index === 0 && imageAttachment ? [{ inlineData: imageAttachment }] : [])] }],
             turnComplete: index === chunks.length - 1
           }
         })));
@@ -843,7 +845,7 @@ function recordLiveModelResult(model, elapsed, succeeded) {
   stats[model] = row;
   writeStored('bard_live_model_stats', JSON.stringify(stats));
 }
-async function requestLiveTextReply(text, codePreview = false, onUpdate = () => {}) {
+async function requestLiveTextReply(text, codePreview = false, onUpdate = () => {}, imageAttachment = null) {
   let audioContext;
   try {
     audioContext = new AudioContext({ latencyHint: 'interactive' });
@@ -871,7 +873,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     try {
       const session = await requestWorker('/api/live-token', candidate);
       if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
-      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate);
+      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate, imageAttachment);
       recordLiveModelResult(session.model, performance.now() - startedAt, true);
       return result;
     } catch (error) {
@@ -884,28 +886,71 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
   throw lastError || new Error('Der Live-Text-Chat ist gerade nicht erreichbar.');
 }
 
+async function prepareAttachment(file, question) {
+  if (/^image\/(?:jpeg|png|webp|gif)$/i.test(file.type)) {
+    if (file.size > 8 * 1024 * 1024) throw new Error('Das Bild ist zu groß. Bitte wähle eine Datei unter 8 MB.');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Das Bild konnte nicht gelesen werden.'));
+      reader.readAsDataURL(file);
+    });
+    const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([\s\S]+)$/i);
+    if (!match) throw new Error('Dieses Bildformat kann hier nicht verarbeitet werden.');
+    return { text: `${question || 'Bitte analysiere das angehängte Bild.'}\n\nAngehängtes Bild: ${file.name}. Beschreibe nur, was im Bild tatsächlich erkennbar ist.`, image: { mimeType: match[1], data: match[2] } };
+  }
+  const supportedText = /\.(?:txt|md|csv|json|html|css|js|xml|log)$/i.test(file.name) || /^(?:text\/|application\/(?:json|xml))/i.test(file.type);
+  if (!supportedText) throw new Error('Bitte wähle ein Foto oder eine Textdatei (TXT, MD, CSV, JSON, HTML, CSS, JS oder XML).');
+  if (file.size > 500_000) throw new Error('Die Textdatei ist zu groß. Bitte wähle eine Datei unter 500 KB.');
+  const content = (await file.text()).replace(/^\uFEFF/, '').slice(0, 30_000);
+  if (!content.trim()) throw new Error('Die ausgewählte Datei enthält keinen lesbaren Text.');
+  return { text: `${question || `Bitte analysiere die angehängte Datei „${file.name}“.`}\n\n--- Inhalt von ${file.name} ---\n${content}\n--- Ende der Datei ---`, image: null };
+}
+function renderAttachmentPreview() {
+  const host = $('#attachmentPreview');
+  host.replaceChildren();
+  const file = state.pendingAttachment;
+  host.hidden = !file;
+  if (!file) return;
+  const label = document.createElement('span');
+  label.textContent = `📎 ${file.name}`;
+  const remove = document.createElement('button');
+  remove.type = 'button'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Anhang entfernen');
+  remove.addEventListener('click', () => { state.pendingAttachment = null; $('#attachmentInput').value = ''; renderAttachmentPreview(); });
+  host.append(label, remove);
+}
+function toggleAttachmentMenu() {
+  const menu = $('#attachmentMenu');
+  menu.hidden = !menu.hidden;
+  $('#imageButton').setAttribute('aria-expanded', String(!menu.hidden));
+}
 async function submitPrompt(text = $('#prompt').value.trim()) {
-  if (!text || state.busy) return;
+  const file = state.pendingAttachment;
+  if ((!text && !file) || state.busy) return;
+  let requestText = text, imageAttachment = null;
+  if (file) {
+    try {
+      const prepared = await prepareAttachment(file, text);
+      requestText = prepared.text; imageAttachment = prepared.image;
+    } catch (error) { notice(error.message || 'Der Anhang konnte nicht gelesen werden.', true); return; }
+  }
+  const displayText = text || (file ? `Bitte analysiere den Anhang: ${file.name}` : '');
   captureConversationMemory(text);
-  const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
+  const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(displayText), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
+  state.pendingAttachment = null; $('#attachmentInput').value = ''; renderAttachmentPreview(); $('#attachmentMenu').hidden = true;
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
-    if (state.imageMode) {
-      const result = await requestWorker('/api/image', { prompt: userMessage.text, userName: state.name, memory: state.memory, context: buildLiveContext().slice(0, -1) });
+    if (state.imageMode && !file) {
+      const result = await requestWorker('/api/image', { prompt: requestText, userName: state.name, memory: state.memory, context: buildLiveContext().slice(0, -1) });
       if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
-      const answer = {
-        id: crypto.randomUUID(), role: 'assistant',
-        text: safeText(result.text || 'Hier ist dein Bild.'),
-        image: { mimeType: result.image.mimeType || 'image/png', data: result.image.data },
-        created: Date.now()
-      };
+      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text || 'Hier ist dein Bild.'), image: { mimeType: result.image.mimeType || 'image/png', data: result.image.data }, created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
-      const codePreview = !state.imageMode && requestsCodePreview(userMessage.text);
+      const codePreview = requestsCodePreview(requestText);
       let result, draftRow = null;
       try {
-        result = await requestLiveTextReply(userMessage.text, codePreview, partialText => {
+        result = await requestLiveTextReply(requestText, codePreview, partialText => {
           if (!partialText) return;
           if (!draftRow) {
             draftRow = renderMessage({ role: 'assistant', text: partialText }, false);
@@ -915,12 +960,12 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
             if (bubble) bubble.textContent = partialText;
           }
           scrollConversationToBottom();
-        });
+        }, imageAttachment);
       } catch (liveError) {
         draftRow?.remove();
-        if (userMessage.text.length <= 1200 || !isProviderQuotaError(liveError)) throw liveError;
+        if (file || displayText.length <= 1200 || !isProviderQuotaError(liveError)) throw liveError;
         result = await requestWorker('/api/chat', {
-          messages: [{ role: 'user', text: userMessage.text }],
+          messages: [{ role: 'user', text: displayText }],
           userName: state.name,
           memory: state.memory,
           context: buildLiveContext().slice(0, -1)
@@ -934,8 +979,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
     }
     setConnection('online', 'Verbunden');
   } catch (error) {
-    setConnection('offline', 'Kurz getrennt');
-    notice('');
+    setConnection('offline', 'Kurz getrennt'); notice('');
     appendAssistantReply(friendlyFailure(error));
   } finally {
     state.imageMode = false; $('#imageButton').classList.remove('selected'); $('#prompt').placeholder = 'Frag Bard AI …';
@@ -1266,7 +1310,7 @@ function handleVoiceMessage(message) {
 async function startVoiceCapture() {
   const voice = state.voice, ctx = voice.audioContext;
   if (!voice.stream || !ctx || !ctx.audioWorklet) throw new Error('Dieser Browser unterstützt den Live-Audiomodus nicht. Bitte aktualisiere deinen Browser.');
-  const workletUrl = new URL('pcm-capture.js', document.baseURI).href;
+  const workletUrl = new URL('pcm-capture.js', import.meta.url).href;
   await ctx.audioWorklet.addModule(workletUrl);
   const source = ctx.createMediaStreamSource(voice.stream);
   const processor = new AudioWorkletNode(ctx, 'bard-pcm-capture');
@@ -1617,7 +1661,45 @@ renderMemory();
 const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
 $('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
-$('#imageButton').addEventListener('click', toggleImageMode);
+$('#imageButton').addEventListener('click', toggleAttachmentMenu);
+$('#chooseAttachmentButton').addEventListener('click', () => { $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false'); $('#attachmentInput').click(); });
+$('#createImageButton').addEventListener('click', () => { $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false'); toggleImageMode(); });
+$('#attachmentInput').addEventListener('change', () => {
+  const file = $('#attachmentInput').files?.[0];
+  if (!file) return;
+  state.pendingAttachment = file; renderAttachmentPreview(); notice('');
+});
+document.addEventListener('click', event => {
+  if (!$('#attachmentMenu').hidden && !$('#attachmentMenu').contains(event.target) && event.target !== $('#imageButton')) {
+    $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false');
+  }
+});
+function toggleDictation() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) { notice('Spracheingabe wird von diesem Browser nicht unterstützt. Nutze „Mit Stimme chatten“.', true); return; }
+  if (state.dictation) { state.dictation.stop(); return; }
+  const recognition = new Recognition();
+  recognition.lang = navigator.language || 'de-DE';
+  recognition.continuous = false; recognition.interimResults = true; recognition.maxAlternatives = 1;
+  const startingText = $('#prompt').value.trim();
+  recognition.onstart = () => { state.dictation = recognition; $('#dictationButton').classList.add('recording'); $('#dictationButton').setAttribute('aria-pressed', 'true'); notice('Ich höre zu …'); };
+  recognition.onresult = event => {
+    const transcript = [...event.results].map(result => result[0]?.transcript || '').join(' ').trim();
+    $('#prompt').value = [startingText, transcript].filter(Boolean).join(startingText ? ' ' : '');
+    resizePrompt(); scrollConversationToBottom();
+  };
+  recognition.onerror = event => notice(event.error === 'not-allowed' || event.error === 'service-not-allowed'
+    ? 'Mikrofonzugriff wurde nicht erlaubt. Erlaube ihn in den Browser-Einstellungen und versuche es erneut.'
+    : 'Die Spracheingabe wurde unterbrochen. Du kannst es erneut versuchen.', true);
+  recognition.onend = () => {
+    if (state.dictation === recognition) state.dictation = null;
+    $('#dictationButton').classList.remove('recording'); $('#dictationButton').setAttribute('aria-pressed', 'false');
+    if (!$('#notice').classList.contains('error')) notice('');
+  };
+  try { recognition.start(); }
+  catch { state.dictation = null; notice('Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.', true); }
+}
+$('#dictationButton').addEventListener('click', toggleDictation);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
@@ -1779,7 +1861,7 @@ $('#livePreviewDialog').addEventListener('click', event => { if (event.target ==
 
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
-window.addEventListener('pagehide', () => stopLiveVoice(false));
+window.addEventListener('pagehide', () => { state.dictation?.stop(); stopLiveVoice(false); });
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').then(registration => registration.update()).catch(() => {});
