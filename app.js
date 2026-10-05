@@ -494,6 +494,12 @@ function updateScrollToBottomButton() {
   const top = page ? window.scrollY : target.scrollTop;
   const viewport = page ? window.innerHeight : target.clientHeight;
   button.hidden = target.scrollHeight - viewport - top < 96;
+  if (button.hidden) return;
+  const inputRect = $('#prompt')?.getBoundingClientRect();
+  if (!inputRect) return;
+  button.style.left = `${inputRect.left + inputRect.width / 2}px`;
+  button.style.top = `${Math.max(8, inputRect.top - button.offsetHeight - 8)}px`;
+  button.style.bottom = 'auto';
 }
 function scrollToBottom(element, behavior = 'auto') {
   if (!element || bottomScrollFrames.has(element)) return;
@@ -911,13 +917,14 @@ function renderAttachmentPreview() {
   host.replaceChildren();
   const file = state.pendingAttachment;
   host.hidden = !file;
-  if (!file) return;
+  if (!file) { requestAnimationFrame(updateScrollToBottomButton); return; }
   const label = document.createElement('span');
   label.textContent = `📎 ${file.name}`;
   const remove = document.createElement('button');
   remove.type = 'button'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Anhang entfernen');
-  remove.addEventListener('click', () => { state.pendingAttachment = null; $('#attachmentInput').value = ''; renderAttachmentPreview(); });
+  remove.addEventListener('click', () => { state.pendingAttachment = null; $('#imageAttachmentInput').value = ''; $('#textAttachmentInput').value = ''; renderAttachmentPreview(); });
   host.append(label, remove);
+  requestAnimationFrame(updateScrollToBottomButton);
 }
 function toggleAttachmentMenu() {
   const menu = $('#attachmentMenu');
@@ -938,7 +945,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
   captureConversationMemory(text);
   const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(displayText), created: Date.now() };
   state.messages.push(userMessage); renderMessage(userMessage); void persistMessages().catch(() => {});
-  state.pendingAttachment = null; $('#attachmentInput').value = ''; renderAttachmentPreview(); $('#attachmentMenu').hidden = true;
+  state.pendingAttachment = null; $('#imageAttachmentInput').value = ''; $('#textAttachmentInput').value = ''; renderAttachmentPreview(); $('#attachmentMenu').hidden = true;
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode && !file) {
@@ -986,7 +993,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
     typing(false); state.busy = false;
   }
 }
-function resizePrompt() { const area = $('#prompt'); area.style.height = 'auto'; area.style.height = `${Math.min(area.scrollHeight, 180)}px`; }
+function resizePrompt() { const area = $('#prompt'); area.style.height = 'auto'; area.style.height = Math.min(area.scrollHeight, 180) + 'px'; requestAnimationFrame(updateScrollToBottomButton); }
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
   speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text.slice(0, 5000)); utterance.lang = 'de-DE'; speechSynthesis.speak(utterance);
@@ -1662,17 +1669,24 @@ const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
 $('#welcomeHeadline').innerHTML = greeting.title; $('#welcomeCopy').textContent = greeting.copy;
 $('#imageButton').addEventListener('click', toggleAttachmentMenu);
-$('#chooseAttachmentButton').addEventListener('click', () => { $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false'); $('#attachmentInput').click(); });
-$('#createImageButton').addEventListener('click', () => { $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false'); toggleImageMode(); });
-$('#attachmentInput').addEventListener('change', () => {
-  const file = $('#attachmentInput').files?.[0];
-  if (!file) return;
-  state.pendingAttachment = file; renderAttachmentPreview(); notice('');
-});
+function closeAttachmentMenu() { $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false'); }
+$('#chooseImageButton').addEventListener('click', () => { closeAttachmentMenu(); $('#imageAttachmentInput').click(); });
+$('#chooseTextAttachmentButton').addEventListener('click', () => { closeAttachmentMenu(); $('#textAttachmentInput').click(); });
+$('#createImageButton').addEventListener('click', () => { closeAttachmentMenu(); toggleImageMode(); });
+for (const inputId of ['imageAttachmentInput', 'textAttachmentInput']) {
+  const input = document.getElementById(inputId);
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    state.pendingAttachment = file;
+    $('#imageAttachmentInput').value = '';
+    $('#textAttachmentInput').value = '';
+    renderAttachmentPreview();
+    notice('');
+  });
+}
 document.addEventListener('click', event => {
-  if (!$('#attachmentMenu').hidden && !$('#attachmentMenu').contains(event.target) && event.target !== $('#imageButton')) {
-    $('#attachmentMenu').hidden = true; $('#imageButton').setAttribute('aria-expanded', 'false');
-  }
+  if (!$('#attachmentMenu').hidden && !$('#attachmentMenu').contains(event.target) && event.target !== $('#imageButton')) closeAttachmentMenu();
 });
 function toggleDictation() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1702,6 +1716,9 @@ function toggleDictation() {
 $('#dictationButton').addEventListener('click', toggleDictation);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
 $('#prompt').addEventListener('input', resizePrompt);
+$('#prompt').addEventListener('focus', () => requestAnimationFrame(updateScrollToBottomButton));
+window.visualViewport?.addEventListener('resize', updateScrollToBottomButton, { passive: true });
+window.visualViewport?.addEventListener('scroll', updateScrollToBottomButton, { passive: true });
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submitPrompt(); } });
 
 $('#voiceButton').addEventListener('click', () => void startLiveVoice());

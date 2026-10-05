@@ -137,7 +137,8 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .composer-wrap { position: sticky; bottom: 0; padding: 16px 0 max(14px, env(safe-area-inset-bottom)); background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 0%, transparent), var(--bg) 26%); }
 .composer { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 24px; background: var(--composer); box-shadow: var(--shadow); }
 .composer:focus-within { border-color: color-mix(in srgb, var(--cyan) 60%, var(--line)); }
-.composer textarea { width: 100%; max-height: 180px; padding: 11px 5px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font-size: 14px; line-height: 1.5; }
+.composer-input-area { display: grid; flex: 1 1 auto; align-content: end; min-width: 0; }
+.composer-input-area textarea { display: block; min-width: 0; width: 100%; max-height: 180px; padding: 11px 5px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font-size: 14px; line-height: 1.5; }
 .tool-button, .send-button, .dictation-button { width: 42px; height: 42px; flex: 0 0 42px; border: 0; border-radius: 15px; background: transparent; color: var(--muted-strong); font-size: 25px; }
 .dictation-button { display:grid; place-items:center; }
 .dictation-button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.8; }
@@ -147,7 +148,7 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .attachment-menu { position:absolute; z-index:30; left:8px; bottom:calc(100% - 72px); display:grid; min-width:min(280px,calc(100vw - 32px)); gap:4px; padding:7px; border:1px solid var(--line); border-radius:16px; background:var(--surface-raised); box-shadow:var(--shadow); }
 .attachment-menu button { min-height:42px; padding:9px 12px; border:0; border-radius:10px; background:transparent; color:var(--text); text-align:left; font:inherit; font-size:13px; }
 .attachment-menu button:hover,.attachment-menu button:focus-visible { background:color-mix(in srgb,var(--cyan) 12%,var(--surface)); outline:none; }
-.attachment-preview { display:flex; align-items:center; justify-content:space-between; gap:8px; max-width:min(100%,520px); margin:6px 4px 0; padding:7px 10px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--muted-strong); font-size:11px; }
+.attachment-preview { display:flex; align-items:center; justify-content:space-between; gap:8px; max-width:100%; margin:0 4px 4px; padding:6px 9px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--muted-strong); font-size:11px; }
 .attachment-preview span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .attachment-preview button { width:28px; height:28px; flex:0 0 28px; border:0; border-radius:50%; background:var(--surface-raised); color:var(--text); font-size:18px; }
 .tool-button:hover { background: var(--surface-raised); color: var(--cyan); }
@@ -466,8 +467,8 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .generated-preview-frame { height:min(60dvh, 560px); min-height:300px; }
 @media(max-width:600px) { .message.has-preview { max-width:100%; } .generated-preview-frame { height:min(58dvh, 560px); min-height:320px; } }
 
-.scroll-to-bottom { position:fixed; z-index:10; left:50%; right:auto; bottom:calc(162px + env(safe-area-inset-bottom)); transform:translateX(-50%); display:grid; width:44px; height:44px; place-items:center; border:1px solid var(--line); border-radius:50%; background:var(--surface-raised); color:var(--cyan); box-shadow:0 8px 24px #0005; font-size:23px; line-height:1; }
+.scroll-to-bottom { position:fixed; z-index:10; left:50%; top:auto; right:auto; bottom:auto; transform:translateX(-50%); display:grid; width:44px; height:44px; place-items:center; border:1px solid var(--line); border-radius:50%; background:var(--surface-raised); color:var(--cyan); box-shadow:0 8px 24px #0005; font-size:23px; line-height:1; }
 .scroll-to-bottom:hover { border-color:var(--cyan); background:var(--surface); }
-.scroll-to-bottom[hidden] { display:none; }
-@media(max-width:600px) { .scroll-to-bottom { bottom:calc(clamp(170px,23vh,220px) + 44px + env(safe-area-inset-bottom)); } }
+.scroll-to-bottom[hidden] { display:none !important; }
+.attachment-menu[hidden], .attachment-preview[hidden] { display:none !important; }
 
