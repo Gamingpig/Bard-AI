@@ -1108,6 +1108,17 @@ function toggleAttachmentMenu() {
 async function submitPrompt(text = $('#prompt').value.trim()) {
   const file = state.pendingAttachment;
   if ((!text && !file) || state.busy) return;
+  if (!file && $('#livePreviewDialog')?.open && isPreviewCloseRequest(text)) {
+    closeLivePreview('Vorschau geschlossen.');
+    const userMessage = { id: crypto.randomUUID(), role: 'user', text: safeText(text), created: Date.now() };
+    state.messages.push(userMessage); renderMessage(userMessage);
+    appendAssistantReply('Vorschau geschlossen.');
+    $('#prompt').value = ''; resizePrompt();
+    void persistMessages().catch(() => {});
+    setConnection('online', 'Verbunden');
+    return;
+  }
+  if ($('#livePreviewDialog')?.open) handlePreviewUserInput(text);
   let requestText = text, imageAttachment = null;
   if (file) {
     try {
@@ -1144,9 +1155,12 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
         }, imageAttachment);
       } catch (liveError) {
         draftRow?.remove();
-        if (file || displayText.length <= 1200 || !isProviderQuotaError(liveError)) throw liveError;
+        if (file || (!codePreview && displayText.length <= 1200) || !isProviderQuotaError(liveError)) throw liveError;
+        const fallbackText = codePreview
+          ? requestText + '\n\nErstelle die angefragte Vorschau als vollständigen, eigenständigen HTML-Codeblock. Verwende keine externen Dateien oder Netzwerkzugriffe.'
+          : displayText;
         result = await requestWorker('/api/chat', {
-          messages: [{ role: 'user', text: displayText }],
+          messages: [{ role: 'user', text: fallbackText }],
           userName: state.name,
           memory: state.memory,
           context: buildLiveContext().slice(0, -1)
@@ -1361,6 +1375,13 @@ function appendCaption(role, text) {
   const next = joinTranscriptText(voice[bufferKey] || '', text);
   if (!next || next === voice[bufferKey]) return;
   voice[bufferKey] = next;
+  if (user && $('#livePreviewDialog')?.open) {
+    clearTimeout(previewTopicCheckTimer);
+    const utterance = next;
+    previewTopicCheckTimer = setTimeout(() => {
+      if (state.voice.turnUser === utterance) handlePreviewUserInput(utterance);
+    }, 1200);
+  }
   const transcript = $('#voiceTranscript');
   $('#voiceTranscriptEmpty')?.remove();
   let entry = voice[entryKey];
@@ -1384,12 +1405,50 @@ function appendCaption(role, text) {
   // Keep the chat behind the live dialog pinned to its latest saved message too.
   scrollConversationToBottom();
 }
-function closeLivePreview() {
+let previewTopicCheckTimer = null;
+function isPreviewCloseRequest(text) {
+  const value = String(text || '').toLocaleLowerCase('de');
+  return /\b(?:vorschau|preview).{0,45}\b(?:schließ\w*|schliess\w*|zumach\w*|beend\w*|ausblend\w*|entfern\w*|hide|close|weg)\b/u.test(value)
+    || /\b(?:schließ\w*|schliess\w*|beend\w*|ausblend\w*|entfern\w*|stopp\w*|hide|close).{0,45}\b(?:vorschau|preview|fenster|ansicht|dialog)\b/u.test(value)
+    || /\b(?:schließ\w*|schliess\w*|beend\w*)\s+(?:sie|es|das)\b/u.test(value)
+    || /\b(?:close|hide)\s+(?:it|this)\b/u.test(value)
+    || /\bmach\w*.{0,25}\b(?:vorschau|preview|fenster|ansicht|dialog)\b.{0,15}\bzu\b/u.test(value)
+    || /\bmach(?:e)?\s+(?:sie|es|das)\s+zu\b/u.test(value)
+    || /\bblende\w*\s+(?:sie|es|das)\s+aus\b/u.test(value)
+    || /\b(?:zu|weg)\s+damit\b/u.test(value);
+}
+function isPreviewFollowUp(text) {
+  const value = String(text || '').toLocaleLowerCase('de');
+  const generic = /\b(?:vorschau|preview|würfel|wuerfel|cube|3d|animation|animier|drahtmodell|visualisierung|szene|html|canvas|farbe|farb|größe|groesse|größer|groesser|kleiner|dreh|drehen|hintergrund|modell|update|aktualisier|änder|aender|anpass|weiter|noch|version|design)\w*\b/u;
+  if (generic.test(value)) return true;
+  const title = String(state.voice.pendingPreview?.title || '').toLocaleLowerCase('de');
+  const ignored = new Set(['diese','dieser','dieses','eine','einer','eines','live','neue','neuer','neues','vorschau','preview','visualisierung','bitte','bard','ai','html','code']);
+  return title.split(/[^\p{L}\p{N}]+/u).filter(word => word.length >= 4 && !ignored.has(word)).some(word => value.includes(word));
+}
+function setPreviewTranscriptStatus(message) {
+  const label = state.voice.previewTranscriptEntry?.isConnected
+    ? state.voice.previewTranscriptEntry.querySelector('.voice-transcript-text') : null;
+  if (label) label.textContent = message;
+}
+function closeLivePreview(status = '') {
   const dialog = $('#livePreviewDialog');
   const frame = $('#livePreviewFrame');
+  clearTimeout(previewTopicCheckTimer);
+  previewTopicCheckTimer = null;
   if (dialog?.open) dialog.close();
   if (frame) frame.src = 'about:blank';
   state.voice.pendingPreview = null;
+  if (status) setPreviewTranscriptStatus(status);
+}
+function handlePreviewUserInput(text) {
+  if (!$('#livePreviewDialog')?.open) return false;
+  if (isPreviewCloseRequest(text)) {
+    closeLivePreview('Vorschau geschlossen.');
+    return true;
+  }
+  if (isPreviewFollowUp(text)) return false;
+  closeLivePreview('Vorschau geschlossen · neues Thema.');
+  return false;
 }
 function openLivePreview(title, preview) {
   const dialog = $('#livePreviewDialog');
@@ -1425,10 +1484,10 @@ async function handleLiveToolCall(toolCall) {
       const html = typeof args.html === 'string' ? args.html : '';
       const title = String(args.title || 'Neue Visualisierung').slice(0, 100);
       const action = String(args.action || '').toLowerCase();
-      const closeRequested = action === 'close' || (!html.trim() && /close|schlie|ausblend|hide/i.test(title));
+      const closeRequested = /^(?:close|hide|dismiss|clear|remove)$/i.test(action)
+        || (!html.trim() && ($('#livePreviewDialog')?.open || /close|schlie|ausblend|hide|beend|entfern/i.test(title)));
       if (closeRequested) {
-        closeLivePreview();
-        if (state.voice.previewTranscriptEntry?.isConnected) state.voice.previewTranscriptEntry.querySelector('.voice-transcript-text').textContent = 'Vorschau geschlossen.';
+        closeLivePreview('Vorschau geschlossen.');
         functionResponses.push({ id: call.id, name, response: { result: 'Die Live-Vorschau wurde geschlossen. Für eine neue Version rufe show_web_preview erneut mit einer vollständigen HTML-Datei auf.' } });
         continue;
       }
