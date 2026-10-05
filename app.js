@@ -105,7 +105,8 @@ const state = {
   chatId: readStored('bard_active_chat') || '',
   pendingAttachment: null,
   dictation: null,
-  dictationStopRequested: false
+  dictationStopRequested: false,
+  dictationStarted: false
 };
 
 function applyTheme(theme, save = false) {
@@ -1689,21 +1690,73 @@ for (const inputId of ['imageAttachmentInput', 'textAttachmentInput']) {
 document.addEventListener('click', event => {
   if (!$('#attachmentMenu').hidden && !$('#attachmentMenu').contains(event.target) && event.target !== $('#imageButton')) closeAttachmentMenu();
 });
+function finishDictationSetup(recognition, message = '') {
+  if (state.dictation === recognition) state.dictation = null;
+  state.dictationStopRequested = false;
+  state.dictationStarted = false;
+  $('#dictationButton').classList.remove('recording');
+  $('#dictationButton').setAttribute('aria-pressed', 'false');
+  notice(message);
+}
+async function startDictationRecognition(recognition, Recognition) {
+  if (typeof Recognition.available === 'function' && typeof Recognition.install === 'function' && 'processLocally' in recognition) {
+    try {
+      const availability = await Recognition.available({ langs: [recognition.lang], processLocally: true });
+      if (state.dictation !== recognition || state.dictationStopRequested) {
+        finishDictationSetup(recognition);
+        return;
+      }
+      if (availability === 'available') {
+        recognition.processLocally = true;
+      } else if (availability === 'downloadable' || availability === 'downloading') {
+        notice('Ich richte die lokale Spracheingabe einmalig ein …');
+        const installed = await Recognition.install({ langs: [recognition.lang] });
+        if (state.dictation !== recognition || state.dictationStopRequested) {
+          finishDictationSetup(recognition);
+          return;
+        }
+        if (installed) {
+          finishDictationSetup(recognition, 'Die lokale Spracheingabe ist bereit. Tippe das Mikrofon bitte noch einmal an.');
+          return;
+        }
+      }
+    } catch {
+      // If on-device recognition is unavailable, try the browser's normal recognition service.
+    }
+  }
+  if (state.dictation !== recognition || state.dictationStopRequested) {
+    finishDictationSetup(recognition);
+    return;
+  }
+  try {
+    recognition.start();
+  } catch {
+    finishDictationSetup(recognition, 'Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.');
+  }
+}
 function toggleDictation() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) { notice('Spracheingabe wird von diesem Browser nicht unterstützt. Nutze „Mit Stimme chatten“.', true); return; }
   if (state.dictation) {
     state.dictationStopRequested = true;
-    try { state.dictation.stop(); } catch { state.dictationStopRequested = false; }
+    if (state.dictationStarted) {
+      try { state.dictation.stop(); } catch {}
+    }
     return;
   }
   const recognition = new Recognition();
   state.dictation = recognition;
   state.dictationStopRequested = false;
+  state.dictationStarted = false;
   recognition.lang = navigator.language || 'de-DE';
   recognition.continuous = false; recognition.interimResults = true; recognition.maxAlternatives = 1;
   const startingText = $('#prompt').value.trim();
-  recognition.onstart = () => { $('#dictationButton').classList.add('recording'); $('#dictationButton').setAttribute('aria-pressed', 'true'); notice('Ich höre zu …'); };
+  recognition.onstart = () => {
+    state.dictationStarted = true;
+    $('#dictationButton').classList.add('recording');
+    $('#dictationButton').setAttribute('aria-pressed', 'true');
+    notice('Ich höre zu …');
+  };
   recognition.onresult = event => {
     const transcript = [...event.results].map(result => result[0]?.transcript || '').join(' ').trim();
     $('#prompt').value = [startingText, transcript].filter(Boolean).join(startingText ? ' ' : '');
@@ -1716,7 +1769,7 @@ function toggleDictation() {
       'service-not-allowed': 'Der Browser-Sprachdienst ist nicht freigegeben. Prüfe die Mikrofon- und Spracheingabe-Berechtigung.',
       'no-speech': 'Ich habe keine Sprache erkannt. Tippe das Mikrofon an und sprich direkt nach dem Start.',
       'audio-capture': 'Der Browser findet kein verfügbares Mikrofon. Prüfe, ob ein anderes Programm es gerade nutzt.',
-      'network': 'Der Spracheingabedienst ist gerade nicht erreichbar. Prüfe die Internetverbindung oder nutze den Sprachmodus.',
+      'network': 'Die Online-Spracherkennung des Browsers ist nicht erreichbar. Bard selbst ist davon getrennt; nutze den Sprachmodus oder prüfe die Browser-Verbindung.',
       'language-not-supported': 'Die Gerätesprache wird von der Spracheingabe nicht unterstützt.'
     };
     notice(messages[event.error] || 'Die Spracheingabe ist abgebrochen. Dein bisheriger Text bleibt erhalten; tippe zum erneuten Start auf das Mikrofon.', true);
@@ -1725,15 +1778,15 @@ function toggleDictation() {
     const stoppedByUser = state.dictationStopRequested;
     if (state.dictation === recognition) state.dictation = null;
     state.dictationStopRequested = false;
-    $('#dictationButton').classList.remove('recording'); $('#dictationButton').setAttribute('aria-pressed', 'false');
+    state.dictationStarted = false;
+    $('#dictationButton').classList.remove('recording');
+    $('#dictationButton').setAttribute('aria-pressed', 'false');
     if (stoppedByUser || !$('#notice').classList.contains('error')) notice('');
   };
-  try { recognition.start(); }
-  catch {
-    state.dictation = null;
-    state.dictationStopRequested = false;
-    notice('Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.', true);
-  }
+  $('#dictationButton').classList.add('recording');
+  $('#dictationButton').setAttribute('aria-pressed', 'true');
+  notice('Prüfe die lokale Spracheingabe …');
+  void startDictationRecognition(recognition, Recognition);
 }
 $('#dictationButton').addEventListener('click', toggleDictation);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
@@ -1900,7 +1953,12 @@ $('#livePreviewDialog').addEventListener('click', event => { if (event.target ==
 
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); state.installPrompt = event; $('#installButton').classList.remove('hidden'); });
 $('#installButton').addEventListener('click', async () => { if (!state.installPrompt) return; await state.installPrompt.prompt(); state.installPrompt = null; $('#installButton').classList.add('hidden'); });
-window.addEventListener('pagehide', () => { state.dictation?.stop(); stopLiveVoice(false); });
+window.addEventListener('pagehide', () => {
+  state.dictationStopRequested = true;
+  if (state.dictationStarted) { try { state.dictation?.stop(); } catch {} }
+  state.dictation = null;
+  stopLiveVoice(false);
+});
 restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').then(registration => registration.update()).catch(() => {});
