@@ -289,6 +289,86 @@ async function restoreRecentContext(db) {
 function readVoiceSample(name) {
   return dbPromise.then(db => idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').get(name)));
 }
+let voiceSampleCacheResetPromise;
+const VOICE_SAMPLE_CACHE_VERSION = '3';
+const voiceSampleJobs = new Map();
+async function resetOldVoiceSamples() {
+  if (!voiceSampleCacheResetPromise) voiceSampleCacheResetPromise = (async () => {
+    if (readStored('bard_voice_sample_cache_version') === VOICE_SAMPLE_CACHE_VERSION) return;
+    const db = await dbPromise;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('voiceSamples', 'readwrite');
+      tx.objectStore('voiceSamples').clear();
+      tx.oncomplete = resolve;
+      tx.onerror = tx.onabort = () => reject(tx.error || new Error('Der Proben-Cache konnte nicht erneuert werden.'));
+    });
+    writeStored('bard_voice_sample_cache_version', VOICE_SAMPLE_CACHE_VERSION);
+  })();
+  return voiceSampleCacheResetPromise;
+}
+function deleteVoiceSample(name) {
+  return dbPromise.then(db => idbRequest(db.transaction('voiceSamples', 'readwrite').objectStore('voiceSamples').delete(name)));
+}
+async function ensureVoiceSample(name, { refresh = false, run = null } = {}) {
+  await resetOldVoiceSamples();
+  if (!refresh) {
+    const saved = await readVoiceSample(name);
+    if (saved?.data && saved?.mimeType) return saved;
+    if (saved) await deleteVoiceSample(name);
+  }
+  if (voiceSampleJobs.has(name)) return voiceSampleJobs.get(name);
+  const job = (async () => {
+    const sample = await requestVoiceSample(name, run);
+    await saveVoiceSample(sample);
+    return sample;
+  })();
+  voiceSampleJobs.set(name, job);
+  try { return await job; }
+  finally { if (voiceSampleJobs.get(name) === job) voiceSampleJobs.delete(name); }
+}
+async function countReadyVoiceSamples() {
+  const db = await dbPromise;
+  const samples = await idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').getAll());
+  return new Set(samples.filter(sample => sample?.data && sample?.mimeType).map(sample => sample.voiceName)).size;
+}
+async function refreshVoicePickerStatus() {
+  if (!$('#voicePickerDialog').open || voicePreviewAudio) return;
+  try {
+    await resetOldVoiceSamples();
+    const ready = await countReadyVoiceSamples();
+    if ($('#voicePickerDialog').open && !voicePreviewAudio) {
+      $('#voicePickerStatus').textContent = ready >= LIVE_VOICES.length
+        ? `${ready} von ${LIVE_VOICES.length} Hörproben sind auf diesem Gerät bereit.`
+        : `${ready} von ${LIVE_VOICES.length} Hörproben bereit · weitere werden im Hintergrund geladen.`;
+    }
+  } catch {}
+}
+let voicePreloadStarted = false;
+function scheduleVoiceSamplePreload() {
+  if (voicePreloadStarted || navigator.onLine === false || navigator.connection?.saveData) return;
+  voicePreloadStarted = true;
+  const begin = () => void preloadVoiceSamples();
+  if ('requestIdleCallback' in window) requestIdleCallback(begin, { timeout: 10000 });
+  else setTimeout(begin, 1800);
+}
+async function preloadVoiceSamples() {
+  try {
+    await resetOldVoiceSamples();
+    const selected = LIVE_VOICES.find(voice => voice.name === state.voice.voiceName)?.name;
+    const order = [...new Set([selected, ...LIVE_VOICES.map(voice => voice.name)].filter(Boolean))];
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < order.length && navigator.onLine !== false) {
+        const name = order[cursor++];
+        try { await ensureVoiceSample(name); } catch {}
+        if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, order.length) }, worker));
+    if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
+  } catch {}
+}
+
 function saveVoiceSample(sample) {
   return dbPromise.then(db => new Promise((resolve, reject) => {
     const tx = db.transaction('voiceSamples', 'readwrite');
@@ -1863,6 +1943,9 @@ function stopVoicePreview() {
   if (voicePreviewAudio?.source) {
     try { voicePreviewAudio.source.stop(); } catch {}
   }
+  if (voicePreviewAudio?.utterance && 'speechSynthesis' in window) {
+    try { speechSynthesis.cancel(); } catch {}
+  }
   if (voicePreviewAudio?.socket) {
     try { voicePreviewAudio.socket.close(1000, 'Hörprobe angehalten'); } catch {}
   }
@@ -1890,8 +1973,38 @@ function voiceSampleBlob(sample) {
 async function requestVoiceSample(name, run) {
   const sample = await requestWorker('/api/voice-preview', { voiceName: name });
   if (!sample.data || !sample.mimeType) throw new Error('Der Sprachdienst hat keine Hörprobe zurückgegeben.');
-  if (run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
+  if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
   return { ...sample, source: 'tts-preview' };
+}
+function playDeviceVoiceFallback(name, button, error) {
+  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
+    $('#voicePickerStatus').textContent = `${name} · Live-Probe aktuell nicht verfügbar. Bitte prüfe die Verbindung.`;
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance('Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?');
+  utterance.lang = navigator.language || 'de-DE';
+  const voices = speechSynthesis.getVoices();
+  utterance.voice = voices.find(voice => voice.lang.toLowerCase().startsWith(utterance.lang.slice(0, 2).toLowerCase()))
+    || voices.find(voice => voice.lang.toLowerCase().startsWith('de'))
+    || null;
+  const current = { name, utterance };
+  voicePreviewAudio = current;
+  utterance.onend = () => {
+    if (voicePreviewAudio !== current) return;
+    voicePreviewAudio = null;
+    button.textContent = '▶ Anhören';
+    $('#voicePickerStatus').textContent = `${name} · Live-Probe nicht erreichbar; die Gerätestimme wurde als Ersatz abgespielt.`;
+  };
+  utterance.onerror = () => {
+    if (voicePreviewAudio !== current) return;
+    voicePreviewAudio = null;
+    button.textContent = '▶ Anhören';
+    $('#voicePickerStatus').textContent = `${name} · Hörprobe fehlgeschlagen. Die Gerätestimme ist auf diesem Gerät nicht verfügbar.`;
+  };
+  button.textContent = '■ Stoppen';
+  $('#voicePickerStatus').textContent = `${name} · Live-Probe wird vorbereitet; falls sie scheitert, nutze ich die Gerätestimme.`;
+  try { speechSynthesis.speak(utterance); }
+  catch { $('#voicePickerStatus').textContent = error?.message || 'Die Hörprobe konnte nicht abgespielt werden.'; }
 }
 async function playVoicePreview(name, button) {
   if (state.voice.active) {
@@ -1912,13 +2025,17 @@ async function playVoicePreview(name, button) {
   try {
     voicePreviewContext = new AudioContext({ latencyHint: 'interactive' });
     await voicePreviewContext.resume();
-    let sample = await readVoiceSample(name);
-    if (!sample) {
-      sample = await requestVoiceSample(name, run);
-      await saveVoiceSample(sample);
-    }
+    let sample = await ensureVoiceSample(name, { run });
     if (run !== voicePreviewRun) return;
-    const audioBuffer = await voicePreviewContext.decodeAudioData(await voiceSampleBlob(sample).arrayBuffer());
+    let audioBuffer;
+    try {
+      audioBuffer = await voicePreviewContext.decodeAudioData(await voiceSampleBlob(sample).arrayBuffer());
+    } catch {
+      await deleteVoiceSample(name);
+      sample = await ensureVoiceSample(name, { refresh: true, run });
+      if (run !== voicePreviewRun) return;
+      audioBuffer = await voicePreviewContext.decodeAudioData(await voiceSampleBlob(sample).arrayBuffer());
+    }
     if (run !== voicePreviewRun) return;
     const source = voicePreviewContext.createBufferSource();
     source.buffer = audioBuffer;
@@ -1942,7 +2059,7 @@ async function playVoicePreview(name, button) {
   } catch (error) {
     if (run === voicePreviewRun) {
       stopVoicePreview();
-      $('#voicePickerStatus').textContent = error.message || 'Die Live-Hörprobe ist gerade nicht verfügbar.';
+      playDeviceVoiceFallback(name, button, error);
     }
   } finally {
     button.disabled = false;
@@ -1977,8 +2094,9 @@ function renderVoicePicker() {
 updateVoicePickerTrigger();
 function openVoicePicker() {
   renderVoicePicker();
-  $('#voicePickerStatus').textContent = state.voice.active ? 'Beende zuerst das laufende Live-Gespräch, um einzelne Stimmen anzuhören.' : '';
+  $('#voicePickerStatus').textContent = state.voice.active ? 'Beende zuerst das laufende Live-Gespräch, um einzelne Stimmen anzuhören.' : 'Prüfe gespeicherte Hörproben …';
   $('#voicePickerDialog').showModal();
+  void refreshVoicePickerStatus();
 }
 $('#voicePickerOpen').addEventListener('click', openVoicePicker);
 $('#voicePickerSettingsOpen').addEventListener('click', openVoicePicker);
@@ -2008,9 +2126,46 @@ window.addEventListener('pagehide', () => {
   state.dictation = null;
   stopLiveVoice(false);
 });
-restoreProfile().then(() => restoreMessages()).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
+restoreProfile().then(() => restoreMessages()).then(() => {
+  void resetOldVoiceSamples().then(scheduleVoiceSamplePreload).catch(() => {});
+}).catch(() => notice('Profil oder lokaler Chatverlauf konnten nicht geladen werden.', true));
 checkWorker().catch(error => { setConnection('offline', 'Nicht erreichbar'); notice(error.message, true); });
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').then(registration => registration.update()).catch(() => {});
+function setupAppUpdates() {
+  if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
+  const banner = $('#appUpdateBanner');
+  const offer = registration => {
+    if (!registration.waiting || !navigator.serviceWorker.controller || banner.hidden === false) return;
+    banner.hidden = false;
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (window.appUpdateRequested) location.reload();
+  });
+  $('#applyAppUpdate').addEventListener('click', () => {
+    const registration = window.appUpdateRegistration;
+    if (!registration?.waiting) return;
+    window.appUpdateRequested = true;
+    registration.waiting.postMessage({ type: 'ACTIVATE_UPDATE' });
+    $('#applyAppUpdate').disabled = true;
+    $('#applyAppUpdate').textContent = 'Aktualisiere …';
+  });
+  $('#dismissAppUpdate').addEventListener('click', () => { banner.hidden = true; });
+  navigator.serviceWorker.register('./sw.js').then(registration => {
+    window.appUpdateRegistration = registration;
+    const check = () => { if (navigator.onLine !== false) void registration.update().catch(() => {}); };
+    registration.addEventListener('updatefound', () => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        if (installing.state === 'installed') offer(registration);
+      });
+    });
+    offer(registration);
+    check();
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  }).catch(() => {});
+}
+setupAppUpdates();
 
 
 

@@ -20,6 +20,11 @@
     </header>
 
     <main>
+      <div id="appUpdateBanner" class="app-update-banner" role="status" aria-live="polite" hidden>
+        <span><strong>App-Update verfügbar</strong><small>Aktualisiere Bard AI, um die neuesten Verbesserungen zu nutzen.</small></span>
+        <button id="applyAppUpdate" type="button">Jetzt aktualisieren</button>
+        <button id="dismissAppUpdate" type="button" aria-label="Später erinnern">Später</button>
+      </div>
       <section class="conversation" aria-label="Gespräch"><div class="conversation-heading"><span id="currentChatTitle">Neues Gespräch</span></div>
         <div class="welcome" id="welcome">
           <div class="orb-wrap"><div class="orb-glow"></div><div class="orb"><span class="orb-core"></span><img src="icons/bard.svg" alt="Bard AI"></div><i class="orbit orbit-a"></i><i class="orbit orbit-b"></i></div>
@@ -129,7 +134,7 @@
         <div><span class="eyebrow">BARD AI LIVE</span><h2 id="voicePickerTitle">Stimme auswählen</h2></div>
         <button id="voicePickerClose" class="voice-icon-button" type="button" aria-label="Stimmenmenü schließen">×</button>
       </header>
-      <p class="voice-picker-copy">Wähle eine der 30 Live-Stimmen. Die Hörprobe wird einmal mit demselben Live-Modell und derselben Stimmenkonfiguration erzeugt und danach auf diesem Gerät gespeichert. Hörproben verbrauchen Live-Nutzung.</p>
+      <p class="voice-picker-copy">Wähle aus 30 Stimmen. Bard bereitet die Hörproben beim ersten Besuch unauffällig im Hintergrund vor und speichert sie auf diesem Gerät. Das Erzeugen der Proben verbraucht verfügbare Hörproben-Nutzung.</p>
       <p id="voicePickerStatus" class="voice-picker-status" aria-live="polite"></p>
       <div id="voicePickerList" class="voice-picker-list"></div>
     </section>

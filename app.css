@@ -479,3 +479,11 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .scroll-to-bottom[hidden] { display:none !important; }
 .attachment-menu[hidden], .attachment-preview[hidden] { display:none !important; }
 
+
+.app-update-banner { position:sticky; top:8px; z-index:80; display:flex; align-items:center; gap:12px; max-width:980px; margin:8px auto; padding:12px 14px; border:1px solid color-mix(in srgb,var(--cyan) 50%,var(--line)); border-radius:16px; background:var(--surface-raised); box-shadow:var(--shadow); }
+.app-update-banner[hidden] { display:none; }
+.app-update-banner > span { display:grid; flex:1; gap:3px; min-width:0; color:var(--text); font-size:13px; }
+.app-update-banner small { color:var(--muted-strong); font-size:11px; }
+.app-update-banner button { min-height:36px; padding:7px 11px; border:1px solid var(--line); border-radius:11px; background:var(--surface); color:var(--text); font:inherit; font-size:12px; font-weight:700; cursor:pointer; }
+.app-update-banner button:first-of-type { border-color:transparent; background:var(--cyan); color:#07111b; }
+@media(max-width:520px) { .app-update-banner { flex-wrap:wrap; margin:6px 8px; gap:8px; } .app-update-banner > span { flex-basis:100%; } .app-update-banner button { flex:1; } }
