@@ -490,8 +490,16 @@ function scrollToBottom(element) {
   });
   bottomScrollFrames.set(element, frame);
 }
+let conversationResizeObserver = null;
 function scrollConversationToBottom() {
-  scrollToBottom($('.conversation'));
+  const conversation = $('.conversation');
+  if (!conversation) return;
+  const messages = $('#messages');
+  if (!conversationResizeObserver && messages && 'ResizeObserver' in window) {
+    conversationResizeObserver = new ResizeObserver(() => scrollToBottom(conversation));
+    conversationResizeObserver.observe(messages);
+  }
+  scrollToBottom(conversation);
 }
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
@@ -1128,6 +1136,8 @@ function appendCaption(role, text) {
     transcript.querySelector('.voice-transcript-entry')?.remove();
   }
   scrollToBottom(transcript);
+  // Keep the chat behind the live dialog pinned to its latest saved message too.
+  scrollConversationToBottom();
 }
 function closeLivePreview() {
   const dialog = $('#livePreviewDialog');
@@ -1730,7 +1740,12 @@ $('#voicePickerDialog').addEventListener('close', stopVoicePreview);
 $('#voicePickerDialog').addEventListener('click', event => { if (event.target === $('#voicePickerDialog')) $('#voicePickerDialog').close(); });
 $('#voiceRetry').addEventListener('click', () => { stopLiveVoice(false); void startLiveVoice(true); });
 $('#voiceDialog').addEventListener('cancel', event => { event.preventDefault(); stopLiveVoice(); });
-$('#voiceDialog').addEventListener('close', () => { closeLivePreview(); if (state.voice.active) stopLiveVoice(false); });
+$('#voiceDialog').addEventListener('close', () => {
+  closeLivePreview();
+  if (state.voice.active) stopLiveVoice(false);
+  scrollConversationToBottom();
+  setTimeout(scrollConversationToBottom, 120);
+});
 $('#livePreviewClose').addEventListener('click', () => {
   closeLivePreview();
   if (state.voice.previewTranscriptEntry?.isConnected) state.voice.previewTranscriptEntry.querySelector('.voice-transcript-text').textContent = 'Vorschau geschlossen.';
