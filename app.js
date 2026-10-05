@@ -479,36 +479,47 @@ function addTextParts(parent, text) {
   }
 }
 const bottomScrollFrames = new WeakMap();
-function updateScrollToBottomButton() {
+function getConversationScrollTarget() {
   const conversation = $('.conversation');
-  const button = $('#scrollToBottom');
-  if (!conversation || !button) return;
-  const distance = conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop;
-  button.hidden = distance < 96;
+  if (conversation && conversation.scrollHeight - conversation.clientHeight > 2) return conversation;
+  return document.scrollingElement || document.documentElement;
 }
-function scrollToBottom(element) {
+function updateScrollToBottomButton() {
+  const target = getConversationScrollTarget();
+  const button = $('#scrollToBottom');
+  if (!target || !button) return;
+  const page = target === document.scrollingElement || target === document.documentElement;
+  const top = page ? window.scrollY : target.scrollTop;
+  const viewport = page ? window.innerHeight : target.clientHeight;
+  button.hidden = target.scrollHeight - viewport - top < 96;
+}
+function scrollToBottom(element, behavior = 'auto') {
   if (!element || bottomScrollFrames.has(element)) return;
+  const page = element === document.scrollingElement || element === document.documentElement;
+  const move = () => {
+    if (page) window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+    else element.scrollTo({ top: element.scrollHeight, behavior });
+    if (element === getConversationScrollTarget()) updateScrollToBottomButton();
+  };
   const frame = requestAnimationFrame(() => {
-    element.scrollTop = element.scrollHeight;
-    if (element === $('.conversation')) updateScrollToBottomButton();
+    move();
     bottomScrollFrames.set(element, requestAnimationFrame(() => {
-      element.scrollTop = element.scrollHeight;
-      if (element === $('.conversation')) updateScrollToBottomButton();
+      move();
       bottomScrollFrames.delete(element);
     }));
   });
   bottomScrollFrames.set(element, frame);
 }
 let conversationResizeObserver = null;
-function scrollConversationToBottom() {
+function scrollConversationToBottom(smooth = false) {
   const conversation = $('.conversation');
   if (!conversation) return;
   const messages = $('#messages');
   if (!conversationResizeObserver && messages && 'ResizeObserver' in window) {
-    conversationResizeObserver = new ResizeObserver(() => scrollToBottom(conversation));
+    conversationResizeObserver = new ResizeObserver(() => scrollConversationToBottom());
     conversationResizeObserver.observe(messages);
   }
-  scrollToBottom(conversation);
+  scrollToBottom(getConversationScrollTarget(), smooth ? 'smooth' : 'auto');
 }
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
@@ -1586,11 +1597,9 @@ sessionStorage.removeItem('bard_session_token');
 applyTheme(state.theme);
 $('#themeToggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark', true));
 $('.conversation').addEventListener('scroll', updateScrollToBottomButton, { passive: true });
-$('#scrollToBottom').addEventListener('click', () => {
-  const conversation = $('.conversation');
-  if (!conversation) return;
-  conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
-});
+window.addEventListener('scroll', updateScrollToBottomButton, { passive: true });
+window.addEventListener('resize', updateScrollToBottomButton, { passive: true });
+$('#scrollToBottom').addEventListener('click', () => scrollConversationToBottom(true));
 $('#chatsButton').addEventListener('click', async () => { await renderChatLibrary(); $('#chatDialog').showModal(); });
 $('#newChatButton').addEventListener('click', async () => { if (state.busy) { notice('Warte, bis die Antwort fertig ist, bevor du einen neuen Chat startest.', true); return; } await persistMessages(); await createChatRecord(await dbPromise); $('#chatDialog').close(); notice('Neuer Chat erstellt.'); });
 $('#closeChatDialog').addEventListener('click', () => $('#chatDialog').close());
