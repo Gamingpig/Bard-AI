@@ -397,7 +397,7 @@ async function deleteChat(chatId) {
 }
 
 function previewMarkup(text) {
-  const match = String(text || '').match(/```(html|svg)\s*([\s\S]*?)```/i);
+  const match = String(text || '').match(/```(html|svg)\s*([\s\S]*?)(?:```|$)/i);
   if (!match) return null;
   const source = match[2].trim();
   if (!source || source.length > 100_000) return null;
@@ -850,7 +850,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     void audioContext.resume().catch(() => {});
   } catch {}
   const livePrompt = codePreview
-    ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
+    ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Falls der Tool-Aufruf nicht verfügbar ist, gib dasselbe Dokument in einem ```html-Codeblock aus, damit die App es direkt als Vorschau anzeigen kann. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
     : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus.';
   const fullContext = buildLiveContext().slice(0, -1);
   // Long prompts get compact recent context to keep their input-token footprint lower.
