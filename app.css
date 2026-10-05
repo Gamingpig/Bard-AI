@@ -455,8 +455,8 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .generated-preview-frame { height:min(60dvh, 560px); min-height:300px; }
 @media(max-width:600px) { .message.has-preview { max-width:100%; } .generated-preview-frame { height:min(58dvh, 560px); min-height:320px; } }
 
-.scroll-to-bottom { position:fixed; z-index:10; right:max(18px,calc((100vw - 980px)/2 + 38px)); bottom:calc(118px + env(safe-area-inset-bottom)); display:grid; width:44px; height:44px; place-items:center; border:1px solid var(--line); border-radius:50%; background:var(--surface-raised); color:var(--cyan); box-shadow:0 8px 24px #0005; font-size:23px; line-height:1; }
+.scroll-to-bottom { position:fixed; z-index:10; left:50%; right:auto; bottom:calc(162px + env(safe-area-inset-bottom)); transform:translateX(-50%); display:grid; width:44px; height:44px; place-items:center; border:1px solid var(--line); border-radius:50%; background:var(--surface-raised); color:var(--cyan); box-shadow:0 8px 24px #0005; font-size:23px; line-height:1; }
 .scroll-to-bottom:hover { border-color:var(--cyan); background:var(--surface); }
 .scroll-to-bottom[hidden] { display:none; }
-@media(max-width:600px) { .scroll-to-bottom { right:18px; bottom:calc(clamp(170px,23vh,220px) + env(safe-area-inset-bottom)); } }
+@media(max-width:600px) { .scroll-to-bottom { bottom:calc(clamp(170px,23vh,220px) + 44px + env(safe-area-inset-bottom)); } }
 
