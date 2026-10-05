@@ -104,7 +104,8 @@ const state = {
   messages: [],
   chatId: readStored('bard_active_chat') || '',
   pendingAttachment: null,
-  dictation: null
+  dictation: null,
+  dictationStopRequested: false
 };
 
 function applyTheme(theme, save = false) {
@@ -1691,27 +1692,48 @@ document.addEventListener('click', event => {
 function toggleDictation() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) { notice('Spracheingabe wird von diesem Browser nicht unterstützt. Nutze „Mit Stimme chatten“.', true); return; }
-  if (state.dictation) { state.dictation.stop(); return; }
+  if (state.dictation) {
+    state.dictationStopRequested = true;
+    try { state.dictation.stop(); } catch { state.dictationStopRequested = false; }
+    return;
+  }
   const recognition = new Recognition();
+  state.dictation = recognition;
+  state.dictationStopRequested = false;
   recognition.lang = navigator.language || 'de-DE';
   recognition.continuous = false; recognition.interimResults = true; recognition.maxAlternatives = 1;
   const startingText = $('#prompt').value.trim();
-  recognition.onstart = () => { state.dictation = recognition; $('#dictationButton').classList.add('recording'); $('#dictationButton').setAttribute('aria-pressed', 'true'); notice('Ich höre zu …'); };
+  recognition.onstart = () => { $('#dictationButton').classList.add('recording'); $('#dictationButton').setAttribute('aria-pressed', 'true'); notice('Ich höre zu …'); };
   recognition.onresult = event => {
     const transcript = [...event.results].map(result => result[0]?.transcript || '').join(' ').trim();
     $('#prompt').value = [startingText, transcript].filter(Boolean).join(startingText ? ' ' : '');
     resizePrompt(); scrollConversationToBottom();
   };
-  recognition.onerror = event => notice(event.error === 'not-allowed' || event.error === 'service-not-allowed'
-    ? 'Mikrofonzugriff wurde nicht erlaubt. Erlaube ihn in den Browser-Einstellungen und versuche es erneut.'
-    : 'Die Spracheingabe wurde unterbrochen. Du kannst es erneut versuchen.', true);
+  recognition.onerror = event => {
+    if (state.dictationStopRequested || event.error === 'aborted') return;
+    const messages = {
+      'not-allowed': 'Mikrofonzugriff ist blockiert. Erlaube ihn in den Browser-Einstellungen.',
+      'service-not-allowed': 'Der Browser-Sprachdienst ist nicht freigegeben. Prüfe die Mikrofon- und Spracheingabe-Berechtigung.',
+      'no-speech': 'Ich habe keine Sprache erkannt. Tippe das Mikrofon an und sprich direkt nach dem Start.',
+      'audio-capture': 'Der Browser findet kein verfügbares Mikrofon. Prüfe, ob ein anderes Programm es gerade nutzt.',
+      'network': 'Der Spracheingabedienst ist gerade nicht erreichbar. Prüfe die Internetverbindung oder nutze den Sprachmodus.',
+      'language-not-supported': 'Die Gerätesprache wird von der Spracheingabe nicht unterstützt.'
+    };
+    notice(messages[event.error] || 'Die Spracheingabe ist abgebrochen. Dein bisheriger Text bleibt erhalten; tippe zum erneuten Start auf das Mikrofon.', true);
+  };
   recognition.onend = () => {
+    const stoppedByUser = state.dictationStopRequested;
     if (state.dictation === recognition) state.dictation = null;
+    state.dictationStopRequested = false;
     $('#dictationButton').classList.remove('recording'); $('#dictationButton').setAttribute('aria-pressed', 'false');
-    if (!$('#notice').classList.contains('error')) notice('');
+    if (stoppedByUser || !$('#notice').classList.contains('error')) notice('');
   };
   try { recognition.start(); }
-  catch { state.dictation = null; notice('Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.', true); }
+  catch {
+    state.dictation = null;
+    state.dictationStopRequested = false;
+    notice('Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.', true);
+  }
 }
 $('#dictationButton').addEventListener('click', toggleDictation);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
