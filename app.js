@@ -1741,16 +1741,21 @@ function stopLiveDictation(showNotice = false) {
   }
   try { live.socket?.close(1000, 'Diktat beendet'); } catch {}
   live.audioContext?.close().catch(() => {});
-  $('#dictationButton').classList.remove('recording');
+  $('#dictationButton').classList.remove('recording', 'connecting');
   $('#dictationButton').setAttribute('aria-pressed', 'false');
+  $('#dictationButton').setAttribute('aria-label', 'Sprache ins Textfeld diktieren');
+  $('#dictationStatus').hidden = true;
   if (showNotice) notice(live.transcript ? 'Spracheingabe eingefügt.' : 'Keine Sprache erkannt. Tippe das Mikrofon an und sprich erneut.', !live.transcript);
   else notice('');
 }
 async function startLiveDictation() {
   const live = { startingText: $('#prompt').value.trim(), transcript: '', socket: null, stream: null, audioContext: null, processor: null, sourceNode: null, silentGain: null, finishTimer: null, timeout: null };
   state.dictationLive = live;
-  $('#dictationButton').classList.add('recording');
+  $('#dictationButton').classList.add('connecting');
   $('#dictationButton').setAttribute('aria-pressed', 'true');
+  $('#dictationButton').setAttribute('aria-label', 'Mikrofon verbindet');
+  $('#dictationStatus').hidden = false;
+  $('#dictationStatusText').textContent = 'Mikrofon verbindet …';
   notice('Verbinde sichere Live-Spracheingabe …');
   try {
     live.audioContext = new AudioContext({ latencyHint: 'interactive' });
@@ -1796,6 +1801,10 @@ async function startLiveDictation() {
               source.connect(processor); processor.connect(silent); silent.connect(live.audioContext.destination);
               live.sourceNode = source; live.processor = processor; live.silentGain = silent;
               live.timeout = setTimeout(() => stopLiveDictation(true), 60000);
+              $('#dictationButton').classList.remove('connecting');
+              $('#dictationButton').classList.add('recording');
+              $('#dictationButton').setAttribute('aria-label', 'Mikrofon aktiv – tippe zum Beenden');
+              $('#dictationStatusText').textContent = 'Mikrofon aktiv · tippe zum Beenden';
               notice('Ich höre zu … Tippe das Mikrofon erneut, um das Diktat zu beenden.');
               resolve();
             }).catch(() => reject(new Error('Die Audioaufnahme wird von diesem Browser nicht unterstützt.')));

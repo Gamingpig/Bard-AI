@@ -38,6 +38,7 @@
           <button id="imageButton" class="tool-button" type="button" aria-label="Anhänge oder Bildoptionen" title="Anhänge oder Bildoptionen" aria-haspopup="menu" aria-expanded="false">＋</button>
           <button id="dictationButton" class="dictation-button" type="button" aria-pressed="false" aria-label="Sprache ins Textfeld diktieren" title="Sprache ins Textfeld diktieren"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 17v4m-4 0h8"/></svg></button>
           <div class="composer-input-area">
+            <div id="dictationStatus" class="dictation-status" role="status" aria-live="polite" hidden><span class="dictation-status-dot"></span><span id="dictationStatusText">Mikrofon aktiv · tippe zum Beenden</span></div>
             <div id="attachmentPreview" class="attachment-preview" hidden></div>
             <textarea id="prompt" rows="1" maxlength="60000" placeholder="Frag Bard AI …" aria-label="Nachricht"></textarea>
           </div>

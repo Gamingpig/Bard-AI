@@ -142,9 +142,16 @@ main { position: relative; width: min(100%, 980px); min-height: 0; margin: auto;
 .tool-button, .send-button, .dictation-button { width: 42px; height: 42px; flex: 0 0 42px; border: 0; border-radius: 15px; background: transparent; color: var(--muted-strong); font-size: 25px; }
 .dictation-button { display:grid; place-items:center; }
 .dictation-button svg { width:21px; height:21px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.8; }
-.dictation-button:hover,.dictation-button.recording { background:color-mix(in srgb,var(--cyan) 14%,var(--surface)); color:var(--cyan); }
-.dictation-button.recording { animation:mic-pulse 1s ease-in-out infinite alternate; }
-@keyframes mic-pulse { to { box-shadow:0 0 0 5px color-mix(in srgb,var(--cyan) 17%,transparent); } }
+.dictation-button:hover { background:color-mix(in srgb,var(--cyan) 14%,var(--surface)); color:var(--cyan); }
+.dictation-button.connecting { background:color-mix(in srgb,var(--cyan) 18%,var(--surface)); color:var(--cyan); box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 24%,transparent); }
+.dictation-button.recording { background:#b42332; color:#fff; animation:mic-pulse 1s ease-in-out infinite alternate; }
+.dictation-button.recording:hover { background:#d12e40; color:#fff; }
+@keyframes mic-pulse { to { box-shadow:0 0 0 6px color-mix(in srgb,#ef3340 42%,transparent); } }
+.dictation-status { display:flex; align-items:center; gap:7px; margin:0 5px 4px; color:#ff6874; font-size:12px; font-weight:700; }
+.dictation-status[hidden] { display:none; }
+.dictation-status-dot { width:9px; height:9px; flex:0 0 9px; border-radius:50%; background:#ef3340; box-shadow:0 0 0 3px color-mix(in srgb,#ef3340 20%,transparent); animation:dictation-dot-pulse 1s ease-in-out infinite alternate; }
+@keyframes dictation-dot-pulse { to { opacity:.45; transform:scale(.78); } }
+@media (prefers-reduced-motion:reduce) { .dictation-button.recording,.dictation-status-dot { animation:none; } }
 .attachment-menu { position:absolute; z-index:30; left:8px; bottom:calc(100% - 72px); display:grid; min-width:min(280px,calc(100vw - 32px)); gap:4px; padding:7px; border:1px solid var(--line); border-radius:16px; background:var(--surface-raised); box-shadow:var(--shadow); }
 .attachment-menu button { min-height:42px; padding:9px 12px; border:0; border-radius:10px; background:transparent; color:var(--text); text-align:left; font:inherit; font-size:13px; }
 .attachment-menu button:hover,.attachment-menu button:focus-visible { background:color-mix(in srgb,var(--cyan) 12%,var(--surface)); outline:none; }
