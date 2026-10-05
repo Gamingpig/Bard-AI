@@ -531,6 +531,17 @@ function scrollConversationToBottom(smooth = false) {
   }
   scrollToBottom(getConversationScrollTarget(), smooth ? 'smooth' : 'auto');
 }
+function isBardApplicationMarkup(source) {
+  const html = String(source || '');
+  const markers = [
+    /id\s*=\s*["']voiceDialog["']/i,
+    /id\s*=\s*["']settingsDialog["']/i,
+    /id\s*=\s*["']dictationButton["']/i,
+    /id\s*=\s*["']voiceTranscript["']/i,
+    /class\s*=\s*["'][^"']*\bcomposer-wrap\b/i
+  ];
+  return /Bard\s*AI/i.test(html) && markers.filter(marker => marker.test(html)).length >= 3;
+}
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
   const row = document.createElement('article');
@@ -542,8 +553,16 @@ function renderMessage(item, scroll = true) {
   else { const icon = document.createElement('img'); icon.src = 'icons/bard.svg'; icon.alt = ''; avatar.append(icon); }
   const bubble = document.createElement('div'); bubble.className = 'bubble';
   const preview = item.role === 'assistant' ? previewMarkup(item.text) : null;
-  addTextParts(bubble, preview ? String(item.text).replace(preview.block, '').trim() : item.text);
-  if (preview) { row.classList.add('has-preview'); renderCodePreview(bubble, preview); }
+  const selfPreview = Boolean(preview && isBardApplicationMarkup(preview.source));
+  const messageText = selfPreview || preview ? String(item.text).replace(preview.block, '').trim() : item.text;
+  addTextParts(bubble, messageText);
+  if (preview && !selfPreview) { row.classList.add('has-preview'); renderCodePreview(bubble, preview); }
+  if (selfPreview) {
+    const warning = document.createElement('p');
+    warning.className = 'preview-suppressed';
+    warning.textContent = 'Diese Vorschau wurde ausgeblendet, weil ihr HTML Bard AI selbst nachbildet.';
+    bubble.append(warning);
+  }
   if (item.sources) renderSources(bubble, item.sources);
   if (item.searchSuggestion) renderSearchSuggestion(bubble, item.searchSuggestion);
   if (item.image) {
