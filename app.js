@@ -309,6 +309,15 @@ async function resetOldVoiceSamples() {
 function deleteVoiceSample(name) {
   return dbPromise.then(db => idbRequest(db.transaction('voiceSamples', 'readwrite').objectStore('voiceSamples').delete(name)));
 }
+let voiceSampleRequestQueue = Promise.resolve();
+function requestVoiceSampleInQueue(name, run) {
+  const request = voiceSampleRequestQueue.then(() => {
+    if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
+    return requestVoiceSample(name, run);
+  });
+  voiceSampleRequestQueue = request.catch(() => {});
+  return request;
+}
 async function ensureVoiceSample(name, { refresh = false, run = null } = {}) {
   await resetOldVoiceSamples();
   if (!refresh) {
@@ -318,7 +327,7 @@ async function ensureVoiceSample(name, { refresh = false, run = null } = {}) {
   }
   if (voiceSampleJobs.has(name)) return voiceSampleJobs.get(name);
   const job = (async () => {
-    const sample = await requestVoiceSample(name, run);
+    const sample = await requestVoiceSampleInQueue(name, run);
     await saveVoiceSample(sample);
     return sample;
   })();
@@ -333,6 +342,10 @@ async function countReadyVoiceSamples() {
 }
 async function refreshVoicePickerStatus() {
   if (!$('#voicePickerDialog').open || voicePreviewAudio) return;
+  if (preloadPauseUntil() > Date.now()) {
+    $('#voicePickerStatus').textContent = 'Das Vorladen ist wegen eines Anbieterlimits pausiert. Gespeicherte Hörproben bleiben verfügbar.';
+    return;
+  }
   try {
     await resetOldVoiceSamples();
     const ready = await countReadyVoiceSamples();
@@ -346,29 +359,66 @@ async function refreshVoicePickerStatus() {
 let voicePreloadStarted = false;
 function scheduleVoiceSamplePreload() {
   if (voicePreloadStarted || navigator.onLine === false || navigator.connection?.saveData) return;
+  const pausedUntil = preloadPauseUntil();
+  if (pausedUntil > Date.now()) {
+    const delay = pausedUntil - Date.now();
+    setTimeout(() => { voicePreloadStarted = false; scheduleVoiceSamplePreload(); }, Math.min(delay + 500, 24 * 60 * 60 * 1000));
+    return;
+  }
   voicePreloadStarted = true;
   const begin = () => void preloadVoiceSamples();
   if ('requestIdleCallback' in window) requestIdleCallback(begin, { timeout: 10000 });
   else setTimeout(begin, 1800);
 }
+window.addEventListener('online', () => { voicePreloadStarted = false; scheduleVoiceSamplePreload(); });
+const VOICE_PRELOAD_PAUSE_KEY = 'bard_voice_preload_pause_until';
+function waitForVoicePreload(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function preloadPauseUntil() { return Number(readStored(VOICE_PRELOAD_PAUSE_KEY)) || 0; }
+function pauseVoicePreload(error) {
+  const now = Date.now();
+  const until = error?.failureKind === 'daily-limit'
+    ? Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1)
+    : now + (error?.failureKind === 'provider-quota' || error?.status === 429 ? 60 * 60 * 1000 : 10 * 60 * 1000);
+  writeStored(VOICE_PRELOAD_PAUSE_KEY, String(until));
+}
 async function preloadVoiceSamples() {
   try {
     await resetOldVoiceSamples();
+    const pausedUntil = preloadPauseUntil();
+    if (pausedUntil > Date.now()) {
+      const delay = pausedUntil - Date.now();
+      setTimeout(() => { voicePreloadStarted = false; scheduleVoiceSamplePreload(); }, Math.min(delay + 500, 24 * 60 * 60 * 1000));
+      return;
+    }
     const selected = LIVE_VOICES.find(voice => voice.name === state.voice.voiceName)?.name;
     const order = [...new Set([selected, ...LIVE_VOICES.map(voice => voice.name)].filter(Boolean))];
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < order.length && navigator.onLine !== false) {
-        const name = order[cursor++];
-        try { await ensureVoiceSample(name); } catch {}
+    let halted = false;
+    for (const name of order) {
+      if (navigator.onLine === false) break;
+      const cached = await readVoiceSample(name);
+      if (cached?.data && cached?.mimeType) continue;
+      try {
+        await ensureVoiceSample(name);
         if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
+        await waitForVoicePreload(1400);
+      } catch (error) {
+        halted = true;
+        pauseVoicePreload(error);
+        if ($('#voicePickerDialog').open && !voicePreviewAudio) {
+          $('#voicePickerStatus').textContent = error?.failureKind === 'provider-quota' || error?.failureKind === 'daily-limit' || error?.status === 429
+            ? `${name} · Anbieter-Kontingent erschöpft. Gespeicherte Hörproben bleiben verfügbar.`
+            : `${name} · Vorladen pausiert, damit keine weiteren Fehlversuche entstehen.`;
+        }
+        break;
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(3, order.length) }, worker));
+    }
+    if (halted) {
+      voicePreloadStarted = false;
+      scheduleVoiceSamplePreload();
+    }
     if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
   } catch {}
 }
-
 function saveVoiceSample(sample) {
   return dbPromise.then(db => new Promise((resolve, reject) => {
     const tx = db.transaction('voiceSamples', 'readwrite');
@@ -1943,10 +1993,7 @@ function stopVoicePreview() {
   if (voicePreviewAudio?.source) {
     try { voicePreviewAudio.source.stop(); } catch {}
   }
-  if (voicePreviewAudio?.utterance && 'speechSynthesis' in window) {
-    try { speechSynthesis.cancel(); } catch {}
-  }
-  if (voicePreviewAudio?.socket) {
+    if (voicePreviewAudio?.socket) {
     try { voicePreviewAudio.socket.close(1000, 'Hörprobe angehalten'); } catch {}
   }
   voicePreviewAudio = null;
@@ -1975,36 +2022,6 @@ async function requestVoiceSample(name, run) {
   if (!sample.data || !sample.mimeType) throw new Error('Der Sprachdienst hat keine Hörprobe zurückgegeben.');
   if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
   return { ...sample, source: 'tts-preview' };
-}
-function playDeviceVoiceFallback(name, button, error) {
-  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
-    $('#voicePickerStatus').textContent = `${name} · Live-Probe aktuell nicht verfügbar. Bitte prüfe die Verbindung.`;
-    return;
-  }
-  const utterance = new SpeechSynthesisUtterance('Hallo! Ich bin Bard AI. Schön, dass du da bist. Womit kann ich dir helfen?');
-  utterance.lang = navigator.language || 'de-DE';
-  const voices = speechSynthesis.getVoices();
-  utterance.voice = voices.find(voice => voice.lang.toLowerCase().startsWith(utterance.lang.slice(0, 2).toLowerCase()))
-    || voices.find(voice => voice.lang.toLowerCase().startsWith('de'))
-    || null;
-  const current = { name, utterance };
-  voicePreviewAudio = current;
-  utterance.onend = () => {
-    if (voicePreviewAudio !== current) return;
-    voicePreviewAudio = null;
-    button.textContent = '▶ Anhören';
-    $('#voicePickerStatus').textContent = `${name} · Live-Probe nicht erreichbar; die Gerätestimme wurde als Ersatz abgespielt.`;
-  };
-  utterance.onerror = () => {
-    if (voicePreviewAudio !== current) return;
-    voicePreviewAudio = null;
-    button.textContent = '▶ Anhören';
-    $('#voicePickerStatus').textContent = `${name} · Hörprobe fehlgeschlagen. Die Gerätestimme ist auf diesem Gerät nicht verfügbar.`;
-  };
-  button.textContent = '■ Stoppen';
-  $('#voicePickerStatus').textContent = `${name} · Live-Probe wird vorbereitet; falls sie scheitert, nutze ich die Gerätestimme.`;
-  try { speechSynthesis.speak(utterance); }
-  catch { $('#voicePickerStatus').textContent = error?.message || 'Die Hörprobe konnte nicht abgespielt werden.'; }
 }
 async function playVoicePreview(name, button) {
   if (state.voice.active) {
@@ -2059,7 +2076,19 @@ async function playVoicePreview(name, button) {
   } catch (error) {
     if (run === voicePreviewRun) {
       stopVoicePreview();
-      playDeviceVoiceFallback(name, button, error);
+      button.textContent = '▶ Anhören';
+      if (error?.failureKind === 'provider-quota') {
+        pauseVoicePreload(error);
+        $('#voicePickerStatus').textContent = `${name} · Das Anbieter-Kontingent für Hörproben ist erschöpft. Bereits gespeicherte Proben bleiben abspielbar.`;
+      } else if (error?.failureKind === 'daily-limit') {
+        pauseVoicePreload(error);
+        $('#voicePickerStatus').textContent = `${name} · Das Tageslimit ist erreicht. Bereits gespeicherte Proben bleiben abspielbar.`;
+      } else if (error?.status === 429) {
+        pauseVoicePreload(error);
+        $('#voicePickerStatus').textContent = `${name} · Der Hörproben-Dienst begrenzt gerade Anfragen. Weitere Abrufe wurden pausiert.`;
+      } else {
+        $('#voicePickerStatus').textContent = `${name} · Hörprobe konnte nicht erstellt werden. Es wurde keine andere Stimme abgespielt.`;
+      }
     }
   } finally {
     button.disabled = false;
