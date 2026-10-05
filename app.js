@@ -479,12 +479,21 @@ function addTextParts(parent, text) {
   }
 }
 const bottomScrollFrames = new WeakMap();
+function updateScrollToBottomButton() {
+  const conversation = $('.conversation');
+  const button = $('#scrollToBottom');
+  if (!conversation || !button) return;
+  const distance = conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop;
+  button.hidden = distance < 96;
+}
 function scrollToBottom(element) {
   if (!element || bottomScrollFrames.has(element)) return;
   const frame = requestAnimationFrame(() => {
     element.scrollTop = element.scrollHeight;
+    if (element === $('.conversation')) updateScrollToBottomButton();
     bottomScrollFrames.set(element, requestAnimationFrame(() => {
       element.scrollTop = element.scrollHeight;
+      if (element === $('.conversation')) updateScrollToBottomButton();
       bottomScrollFrames.delete(element);
     }));
   });
@@ -1576,6 +1585,12 @@ localStorage.removeItem('bard_backend_url');
 sessionStorage.removeItem('bard_session_token');
 applyTheme(state.theme);
 $('#themeToggle').addEventListener('click', () => applyTheme(state.theme === 'dark' ? 'light' : 'dark', true));
+$('.conversation').addEventListener('scroll', updateScrollToBottomButton, { passive: true });
+$('#scrollToBottom').addEventListener('click', () => {
+  const conversation = $('.conversation');
+  if (!conversation) return;
+  conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
+});
 $('#chatsButton').addEventListener('click', async () => { await renderChatLibrary(); $('#chatDialog').showModal(); });
 $('#newChatButton').addEventListener('click', async () => { if (state.busy) { notice('Warte, bis die Antwort fertig ist, bevor du einen neuen Chat startest.', true); return; } await persistMessages(); await createChatRecord(await dbPromise); $('#chatDialog').close(); notice('Neuer Chat erstellt.'); });
 $('#closeChatDialog').addEventListener('click', () => $('#chatDialog').close());
