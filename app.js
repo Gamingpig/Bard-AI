@@ -430,6 +430,7 @@ function renderCodePreview(parent, preview) {
   frame.loading = 'eager';
   frame.addEventListener('load', () => {
     frame.contentWindow?.postMessage({ type: 'bard-preview', html: preview.html }, '*');
+    scrollConversationToBottom();
   }, { once: true });
   frame.src = new URL('./preview.html', document.baseURI).href;
   const details = document.createElement('details');
@@ -477,13 +478,20 @@ function addTextParts(parent, text) {
     parent.append(p);
   }
 }
-function scrollConversationToBottom() {
-  const conversation = $('.conversation');
-  if (!conversation) return;
-  requestAnimationFrame(() => {
-    conversation.scrollTop = conversation.scrollHeight;
-    requestAnimationFrame(() => { conversation.scrollTop = conversation.scrollHeight; });
+const bottomScrollFrames = new WeakMap();
+function scrollToBottom(element) {
+  if (!element || bottomScrollFrames.has(element)) return;
+  const frame = requestAnimationFrame(() => {
+    element.scrollTop = element.scrollHeight;
+    bottomScrollFrames.set(element, requestAnimationFrame(() => {
+      element.scrollTop = element.scrollHeight;
+      bottomScrollFrames.delete(element);
+    }));
   });
+  bottomScrollFrames.set(element, frame);
+}
+function scrollConversationToBottom() {
+  scrollToBottom($('.conversation'));
 }
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
@@ -497,7 +505,7 @@ function renderMessage(item, scroll = true) {
   const bubble = document.createElement('div'); bubble.className = 'bubble';
   const preview = item.role === 'assistant' ? previewMarkup(item.text) : null;
   addTextParts(bubble, preview ? String(item.text).replace(preview.block, '').trim() : item.text);
-  if (preview) renderCodePreview(bubble, preview);
+  if (preview) { row.classList.add('has-preview'); renderCodePreview(bubble, preview); }
   if (item.sources) renderSources(bubble, item.sources);
   if (item.searchSuggestion) renderSearchSuggestion(bubble, item.searchSuggestion);
   if (item.image) {
@@ -620,7 +628,7 @@ function typing(show) {
 }
 function requestsCodePreview(text) {
   const value = String(text || '').toLocaleLowerCase('de');
-  return /\b(html|css|javascript|js|svg|canvas)\b|webseite|website|landing[- ]?page|prototyp|grafik|diagramm|visualisierung|animation|vorschau|dashboard/.test(value);
+  return /\b(html|css|javascript|js|svg|canvas|3d|cube|wireframe)\b|webseite|website|landing[- ]?page|prototyp|grafik|diagramm|visualisierung|animation|vorschau|dashboard|würfel|drahtmodell|drahtgitter|rotier|drehend|drehen|mach mir (?:ein|eine) (?:bild|grafik|animation|seite|webseite)/.test(value);
 }
 function playLiveTextAudio(chunks, context) {
   if (!context || context.state !== 'running') { context?.close().catch(() => {}); return; }
@@ -645,13 +653,13 @@ function playLiveTextAudio(chunks, context) {
   }
   if (!remaining) context.close().catch(() => {});
 }
-function liveTextExchange(session, prompt, audioContext) {
+function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}) {
   return new Promise((resolve, reject) => {
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(session.token);
     const socket = new WebSocket(socketUrl);
     socket.binaryType = 'arraybuffer';
     let settled = false, setupReady = false, submitted = false;
-    let answerText = '', previewHtml = '', searchSuggestion = '', toolUsed = false;
+    let answerText = '', previewHtml = '', searchSuggestion = '', toolUsed = false, lastPublishedText = '';
     const audio = [], sources = [];
     const timeout = setTimeout(() => finish(reject, new Error('Die Live-Textantwort dauerte zu lange.')), 180000);
     function finish(callback, value) {
@@ -720,7 +728,7 @@ function liveTextExchange(session, prompt, audioContext) {
           if (name === 'show_web_preview') {
             const html = typeof args.html === 'string' ? args.html : '';
             const fence = String.fromCharCode(96).repeat(3);
-            const preview = html.length <= 10_000 ? previewMarkup(fence + 'html\n' + html + '\n' + fence) : null;
+            const preview = html.length <= 100_000 ? previewMarkup(fence + 'html\n' + html + '\n' + fence) : null;
             if (preview) {
               previewHtml = preview.source;
               functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wird zusammen mit der Chat-Antwort angezeigt.' } });
@@ -748,6 +756,10 @@ function liveTextExchange(session, prompt, audioContext) {
           if (source.title && /^https:\/\//i.test(String(source.uri || ''))) sources.push({ title: String(source.title).slice(0, 180), url: String(source.uri) });
         }
         searchSuggestion = String(grounding.searchEntryPoint?.renderedContent || grounding.search_entry_point?.rendered_content || '').slice(0, 24000);
+      }
+      if (answerText !== lastPublishedText) {
+        lastPublishedText = answerText;
+        try { onUpdate(answerText); } catch {}
       }
       const generationComplete = content.generationComplete || content.generation_complete;
       const turnComplete = content.turnComplete || content.turn_complete;
@@ -803,22 +815,22 @@ function recordLiveModelResult(model, elapsed, succeeded) {
   stats[model] = row;
   writeStored('bard_live_model_stats', JSON.stringify(stats));
 }
-async function requestLiveTextReply(text, codePreview = false) {
+async function requestLiveTextReply(text, codePreview = false, onUpdate = () => {}) {
   let audioContext;
   try {
     audioContext = new AudioContext({ latencyHint: 'interactive' });
     void audioContext.resume().catch(() => {});
   } catch {}
   const livePrompt = codePreview
-    ? text + '\n\nErstelle eine eigenständige, sofort lauffähige HTML-Vorschau mit CSS und JavaScript direkt in der Datei. Verwende keine externen Dateien oder Netzwerkzugriffe. Erzeuge Grafiken mit inline-SVG, Canvas oder CSS. Gib außerhalb des Codeblocks höchstens eine kurze Erklärung.'
-    : text;
+    ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
+    : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus.';
   const fullContext = buildLiveContext().slice(0, -1);
   // Long prompts get compact recent context to keep their input-token footprint lower.
   const requestContext = text.length > 1200
     ? fullContext.slice(-2).map(item => ({ ...item, text: String(item.text || '').slice(-400) }))
     : fullContext;
   const tokenRequest = {
-    responseMode: codePreview ? 'creative' : 'concise',
+    responseMode: 'creative',
     userName: state.name,
     memory: state.memory,
     voiceName: state.voice.voiceName || 'Puck',
@@ -831,7 +843,7 @@ async function requestLiveTextReply(text, codePreview = false) {
     try {
       const session = await requestWorker('/api/live-token', candidate);
       if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
-      const result = await liveTextExchange(session, livePrompt, audioContext);
+      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate);
       recordLiveModelResult(session.model, performance.now() - startedAt, true);
       return result;
     } catch (error) {
@@ -863,10 +875,21 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
     } else {
       const codePreview = !state.imageMode && requestsCodePreview(userMessage.text);
-      let result;
+      let result, draftRow = null;
       try {
-        result = await requestLiveTextReply(userMessage.text, codePreview);
+        result = await requestLiveTextReply(userMessage.text, codePreview, partialText => {
+          if (!partialText) return;
+          if (!draftRow) {
+            draftRow = renderMessage({ role: 'assistant', text: partialText }, false);
+            draftRow.classList.add('streaming');
+          } else {
+            const bubble = draftRow.querySelector('.bubble');
+            if (bubble) bubble.textContent = partialText;
+          }
+          scrollConversationToBottom();
+        });
       } catch (liveError) {
+        draftRow?.remove();
         if (userMessage.text.length <= 1200 || !isProviderQuotaError(liveError)) throw liveError;
         result = await requestWorker('/api/chat', {
           messages: [{ role: 'user', text: userMessage.text }],
@@ -875,6 +898,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
           context: buildLiveContext().slice(0, -1)
         });
       }
+      draftRow?.remove();
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (Array.isArray(result.audio) && result.audio.length) playLiveTextAudio(result.audio, result.audioContext);
@@ -1103,7 +1127,7 @@ function appendCaption(role, text) {
   while (transcript.querySelectorAll('.voice-transcript-entry').length > 36) {
     transcript.querySelector('.voice-transcript-entry')?.remove();
   }
-  transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'smooth' });
+  scrollToBottom(transcript);
 }
 function closeLivePreview() {
   const dialog = $('#livePreviewDialog');
