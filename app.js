@@ -532,20 +532,33 @@ async function deleteChat(chatId) {
 }
 
 function previewMarkup(text) {
-  const match = String(text || '').match(/```(html|svg)\s*([\s\S]*?)(?:```|$)/i);
-  if (!match) return null;
-  const source = match[2].trim();
-  if (!source || source.length > 100_000) return null;
-  let html = match[1].toLowerCase() === 'svg'
-    ? `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020">${source}</body></html>`
-    : source;
-  if (!/<meta\b[^>]*name=["']viewport["']/i.test(html)) {
-    const viewport = '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">';
-    if (/<head\b[^>]*>/i.test(html)) html = html.replace(/<head\b[^>]*>/i, match => match + viewport);
-    else if (/<html\b[^>]*>/i.test(html)) html = html.replace(/<html\b[^>]*>/i, match => match + '<head>' + viewport + '</head>');
-    else html = `<!doctype html><html lang="de"><head><meta charset="utf-8">${viewport}</head><body>${html}</body></html>`;
+  const input = String(text || '');
+  const fencePattern = /```(html|svg)\s*([\s\S]*?)(?:```|$)/gi;
+  const candidates = [];
+  const suppressedBlocks = [];
+  let match;
+  while ((match = fencePattern.exec(input))) {
+    const source = match[2].trim();
+    if (!source || source.length > 100_000) continue;
+    const block = match[0];
+    if (isBardApplicationMarkup(source)) {
+      suppressedBlocks.push(block);
+      continue;
+    }
+    let html = match[1].toLowerCase() === 'svg'
+      ? `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020">${source}</body></html>`
+      : source;
+    if (!/<meta\b[^>]*name=["']viewport["']/i.test(html)) {
+      const viewport = '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">';
+      if (/<head\b[^>]*>/i.test(html)) html = html.replace(/<head\b[^>]*>/i, head => head + viewport);
+      else if (/<html\b[^>]*>/i.test(html)) html = html.replace(/<html\b[^>]*>/i, root => root + '<head>' + viewport + '</head>');
+      else html = `<!doctype html><html lang="de"><head><meta charset="utf-8">${viewport}</head><body>${html}</body></html>`;
+    }
+    candidates.push({ source, html, block });
   }
-  return { source, html, block: match[0] };
+  const selected = candidates[0] || null;
+  if (!selected && !suppressedBlocks.length) return null;
+  return { ...(selected || {}), suppressedBlocks, selfPreviewOnly: !selected && suppressedBlocks.length > 0 };
 }
 function renderCodePreview(parent, preview) {
   const card = document.createElement('section');
@@ -664,14 +677,15 @@ function scrollConversationToBottom(smooth = false) {
 }
 function isBardApplicationMarkup(source) {
   const html = String(source || '');
-  const markers = [
+  const appMarkers = [
     /id\s*=\s*["']voiceDialog["']/i,
     /id\s*=\s*["']settingsDialog["']/i,
     /id\s*=\s*["']dictationButton["']/i,
     /id\s*=\s*["']voiceTranscript["']/i,
     /class\s*=\s*["'][^"']*\bcomposer-wrap\b/i
   ];
-  return /Bard\s*AI/i.test(html) && markers.filter(marker => marker.test(html)).length >= 3;
+  const matches = appMarkers.filter(marker => marker.test(html)).length;
+  return /Bard\s*AI/i.test(html) && matches >= 2;
 }
 function renderMessage(item, scroll = true) {
   if (scroll) $('#welcome').classList.add('hidden');
@@ -684,14 +698,20 @@ function renderMessage(item, scroll = true) {
   else { const icon = document.createElement('img'); icon.src = 'icons/bard.svg'; icon.alt = ''; avatar.append(icon); }
   const bubble = document.createElement('div'); bubble.className = 'bubble';
   const preview = item.role === 'assistant' ? previewMarkup(item.text) : null;
-  const selfPreview = Boolean(preview && isBardApplicationMarkup(preview.source));
-  const messageText = selfPreview || preview ? String(item.text).replace(preview.block, '').trim() : item.text;
+  let messageText = String(item.text || '');
+  if (preview) {
+    if (preview.block) messageText = messageText.replace(preview.block, '');
+    for (const block of preview.suppressedBlocks) messageText = messageText.replace(block, '');
+    messageText = messageText.trim();
+  }
   addTextParts(bubble, messageText);
-  if (preview && !selfPreview) { row.classList.add('has-preview'); renderCodePreview(bubble, preview); }
-  if (selfPreview) {
+  if (preview?.block) { row.classList.add('has-preview'); renderCodePreview(bubble, preview); }
+  if (preview?.suppressedBlocks.length) {
     const warning = document.createElement('p');
     warning.className = 'preview-suppressed';
-    warning.textContent = 'Diese Vorschau wurde ausgeblendet, weil ihr HTML Bard AI selbst nachbildet.';
+    warning.textContent = preview.block
+      ? 'Eine eingebettete Bard-Oberfläche wurde ausgeblendet; die passende Inhaltsvorschau wird angezeigt.'
+      : 'Diese Vorschau wurde ausgeblendet, weil ihr HTML Bard AI selbst nachbildet.';
     bubble.append(warning);
   }
   if (item.sources) renderSources(bubble, item.sources);
@@ -917,10 +937,12 @@ function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}, im
             const html = typeof args.html === 'string' ? args.html : '';
             const fence = String.fromCharCode(96).repeat(3);
             const preview = html.length <= 100_000 ? previewMarkup(fence + 'html\n' + html + '\n' + fence) : null;
-            if (preview) {
+            if (preview?.block) {
               previewHtml = preview.source;
               functionResponses.push({ id: call.id, name, response: { result: 'Die Vorschau wird zusammen mit der Chat-Antwort angezeigt.' } });
-            } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen.' } });
+            } else if (preview?.selfPreviewOnly) {
+              functionResponses.push({ id: call.id, name, response: { error: 'Die Bard-App-Oberfläche kann nicht als eigene Vorschau eingebettet werden. Erstelle stattdessen nur den angefragten Inhalt.' } });
+            } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 100.000 Zeichen.' } });
           } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
         }
         try { socket.send(JSON.stringify({ toolResponse: { functionResponses } })); }
@@ -1411,11 +1433,13 @@ async function handleLiveToolCall(toolCall) {
         continue;
       }
       const preview = html.length <= 10_000 ? previewMarkup('```html\n' + html + '\n```') : null;
-      if (preview) {
-        state.voice.pendingPreview = { title, html };
+      if (preview?.block) {
+        state.voice.pendingPreview = { title, html: preview.source };
         showLiveCodePreview(title, preview);
-        functionResponses.push({ id: call.id, name, response: { result: 'Die große Live-Vorschau wurde geöffnet oder aktualisiert. Für Änderungen rufe show_web_preview erneut auf; zum Schließen rufe es mit Titel „close“ und leerem HTML auf.' } });
-      } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen. Erzeuge eine kleinere vollständige Vorschau.' } });
+        functionResponses.push({ id: call.id, name, response: { result: 'Die große Live-Vorschau wurde geöffnet oder aktualisiert.' } });
+      } else if (preview?.selfPreviewOnly) {
+        functionResponses.push({ id: call.id, name, response: { error: 'Die Bard-App-Oberfläche kann nicht als eigene Vorschau eingebettet werden. Erzeuge stattdessen nur den angefragten Inhalt.' } });
+      } else functionResponses.push({ id: call.id, name, response: { error: 'HTML fehlt, ist ungültig oder größer als 10.000 Zeichen.' } });
     } else functionResponses.push({ id: call.id, name, response: { error: 'Dieses Tool ist in der PWA nicht verfügbar.' } });
   }
   if (functionResponses.length && state.voice.socket?.readyState === WebSocket.OPEN) state.voice.socket.send(JSON.stringify({ toolResponse: { functionResponses } }));
