@@ -1797,6 +1797,7 @@ async function startLiveDictation() {
               live.sourceNode = source; live.processor = processor; live.silentGain = silent;
               live.timeout = setTimeout(() => stopLiveDictation(true), 60000);
               notice('Ich höre zu … Tippe das Mikrofon erneut, um das Diktat zu beenden.');
+              resolve();
             }).catch(() => reject(new Error('Die Audioaufnahme wird von diesem Browser nicht unterstützt.')));
           } catch { reject(new Error('Die Audioaufnahme wird von diesem Browser nicht unterstützt.')); }
           return;
