@@ -105,6 +105,7 @@ const state = {
   chatId: readStored('bard_active_chat') || '',
   pendingAttachment: null,
   dictation: null,
+  dictationLive: null,
   dictationStopRequested: false,
   dictationStarted: false
 };
@@ -1717,95 +1718,114 @@ function finishDictationSetup(recognition, message = '') {
   $('#dictationButton').setAttribute('aria-pressed', 'false');
   notice(message);
 }
-async function startDictationRecognition(recognition, Recognition) {
-  if (typeof Recognition.available === 'function' && typeof Recognition.install === 'function' && 'processLocally' in recognition) {
-    try {
-      const availability = await Recognition.available({ langs: [recognition.lang], processLocally: true });
-      if (state.dictation !== recognition || state.dictationStopRequested) {
-        finishDictationSetup(recognition);
-        return;
-      }
-      if (availability === 'available') {
-        recognition.processLocally = true;
-      } else if (availability === 'downloadable' || availability === 'downloading') {
-        notice('Ich richte die lokale Spracheingabe einmalig ein …');
-        const installed = await Recognition.install({ langs: [recognition.lang] });
-        if (state.dictation !== recognition || state.dictationStopRequested) {
-          finishDictationSetup(recognition);
-          return;
-        }
-        if (installed) {
-          finishDictationSetup(recognition, 'Die lokale Spracheingabe ist bereit. Tippe das Mikrofon bitte noch einmal an.');
-          return;
-        }
-      }
-    } catch {
-      // If on-device recognition is unavailable, try the browser's normal recognition service.
-    }
+function updateDictationText(text) {
+  const live = state.dictationLive;
+  if (!live || !text) return;
+  live.transcript = joinTranscriptText(live.transcript, text);
+  $('#prompt').value = [live.startingText, live.transcript].filter(Boolean).join(live.startingText ? ' ' : '');
+  resizePrompt(); scrollConversationToBottom();
+}
+function stopLiveDictation(showNotice = false) {
+  const live = state.dictationLive;
+  if (!live) return;
+  state.dictationLive = null;
+  clearTimeout(live.finishTimer);
+  clearTimeout(live.timeout);
+  try { live.processor?.disconnect(); } catch {}
+  try { live.sourceNode?.disconnect(); } catch {}
+  try { live.silentGain?.disconnect(); } catch {}
+  if (live.processor?.port) live.processor.port.onmessage = null;
+  for (const track of live.stream?.getTracks?.() || []) track.stop();
+  if (live.socket?.readyState === WebSocket.OPEN) {
+    try { live.socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } })); } catch {}
   }
-  if (state.dictation !== recognition || state.dictationStopRequested) {
-    finishDictationSetup(recognition);
-    return;
-  }
+  try { live.socket?.close(1000, 'Diktat beendet'); } catch {}
+  live.audioContext?.close().catch(() => {});
+  $('#dictationButton').classList.remove('recording');
+  $('#dictationButton').setAttribute('aria-pressed', 'false');
+  if (showNotice) notice(live.transcript ? 'Spracheingabe eingefügt.' : 'Keine Sprache erkannt. Tippe das Mikrofon an und sprich erneut.', !live.transcript);
+  else notice('');
+}
+async function startLiveDictation() {
+  const live = { startingText: $('#prompt').value.trim(), transcript: '', socket: null, stream: null, audioContext: null, processor: null, sourceNode: null, silentGain: null, finishTimer: null, timeout: null };
+  state.dictationLive = live;
+  $('#dictationButton').classList.add('recording');
+  $('#dictationButton').setAttribute('aria-pressed', 'true');
+  notice('Verbinde sichere Live-Spracheingabe …');
   try {
-    recognition.start();
-  } catch {
-    finishDictationSetup(recognition, 'Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.');
+    live.audioContext = new AudioContext({ latencyHint: 'interactive' });
+    await live.audioContext.resume();
+    live.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    const session = await requestWorker('/api/live-token', {
+      userName: state.name, memory: state.memory, voiceName: state.voice.voiceName || 'Puck',
+      context: buildLiveContext(), model: liveModelOrder()[0]
+    });
+    if (state.dictationLive !== live) return;
+    if (!session.token || !session.model || !session.config) throw new Error('Die Live-Spracheingabe konnte nicht eingerichtet werden.');
+    const socket = new WebSocket('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(session.token));
+    live.socket = socket; socket.binaryType = 'arraybuffer';
+    await new Promise((resolve, reject) => {
+      let ready = false;
+      live.timeout = setTimeout(() => reject(new Error('Der Live-Sprachkanal antwortet nicht rechtzeitig.')), 25000);
+      socket.onopen = () => {
+        try { socket.send(JSON.stringify({ setup: { model: session.model, ...session.config } })); }
+        catch { reject(new Error('Die Live-Spracheingabe konnte nicht gestartet werden.')); }
+      };
+      socket.onmessage = async event => {
+        let message;
+        try {
+          const raw = typeof event.data === 'string' ? event.data : event.data instanceof Blob ? await event.data.text()
+            : event.data instanceof ArrayBuffer ? new TextDecoder().decode(event.data) : '';
+          message = JSON.parse(raw);
+        } catch { return; }
+        if (message.error?.message) { reject(new Error('Der Live-Sprachdienst ist gerade nicht erreichbar.')); return; }
+        if (message.setupComplete || message.setup_complete) {
+          if (ready) return; ready = true; clearTimeout(live.timeout);
+          try {
+            const url = new URL('pcm-capture.js', import.meta.url).href;
+            void live.audioContext.audioWorklet.addModule(url).then(() => {
+              if (state.dictationLive !== live || socket.readyState !== WebSocket.OPEN) return;
+              const source = live.audioContext.createMediaStreamSource(live.stream);
+              const processor = new AudioWorkletNode(live.audioContext, 'bard-pcm-capture');
+              const silent = live.audioContext.createGain(); silent.gain.value = 0;
+              processor.port.onmessage = chunk => {
+                if (state.dictationLive !== live || socket.readyState !== WebSocket.OPEN) return;
+                const samples = new Float32Array(chunk.data);
+                sendVoiceAudioSamples(samples, socket);
+              };
+              source.connect(processor); processor.connect(silent); silent.connect(live.audioContext.destination);
+              live.sourceNode = source; live.processor = processor; live.silentGain = silent;
+              live.timeout = setTimeout(() => stopLiveDictation(true), 60000);
+              notice('Ich höre zu … Tippe das Mikrofon erneut, um das Diktat zu beenden.');
+            }).catch(() => reject(new Error('Die Audioaufnahme wird von diesem Browser nicht unterstützt.')));
+          } catch { reject(new Error('Die Audioaufnahme wird von diesem Browser nicht unterstützt.')); }
+          return;
+        }
+        const content = message.serverContent || message.server_content;
+        const input = content?.inputTranscription?.text || content?.input_transcription?.text;
+        if (input) {
+          updateDictationText(input);
+          clearTimeout(live.finishTimer);
+          live.finishTimer = setTimeout(() => stopLiveDictation(true), 1100);
+        }
+      };
+      socket.onerror = () => reject(new Error('Die Live-Spracheingabe konnte keine Verbindung herstellen.'));
+      socket.onclose = () => { if (!ready && state.dictationLive === live) reject(new Error('Der Live-Sprachkanal wurde geschlossen.')); };
+    });
+  } catch (error) {
+    if (state.dictationLive === live) {
+      stopLiveDictation(false);
+      notice(error.message || 'Die Spracheingabe konnte nicht gestartet werden. Prüfe die Mikrofonberechtigung.', true);
+    }
   }
 }
 function toggleDictation() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) { notice('Spracheingabe wird von diesem Browser nicht unterstützt. Nutze „Mit Stimme chatten“.', true); return; }
-  if (state.dictation) {
-    state.dictationStopRequested = true;
-    if (state.dictationStarted) {
-      try { state.dictation.stop(); } catch {}
-    }
+  if (state.dictationLive) { stopLiveDictation(true); return; }
+  if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
+    notice('Dieser Browser unterstützt die Live-Spracheingabe nicht. Nutze „Mit Stimme chatten“.', true);
     return;
   }
-  const recognition = new Recognition();
-  state.dictation = recognition;
-  state.dictationStopRequested = false;
-  state.dictationStarted = false;
-  recognition.lang = navigator.language || 'de-DE';
-  recognition.continuous = false; recognition.interimResults = true; recognition.maxAlternatives = 1;
-  const startingText = $('#prompt').value.trim();
-  recognition.onstart = () => {
-    state.dictationStarted = true;
-    $('#dictationButton').classList.add('recording');
-    $('#dictationButton').setAttribute('aria-pressed', 'true');
-    notice('Ich höre zu …');
-  };
-  recognition.onresult = event => {
-    const transcript = [...event.results].map(result => result[0]?.transcript || '').join(' ').trim();
-    $('#prompt').value = [startingText, transcript].filter(Boolean).join(startingText ? ' ' : '');
-    resizePrompt(); scrollConversationToBottom();
-  };
-  recognition.onerror = event => {
-    if (state.dictationStopRequested || event.error === 'aborted') return;
-    const messages = {
-      'not-allowed': 'Mikrofonzugriff ist blockiert. Erlaube ihn in den Browser-Einstellungen.',
-      'service-not-allowed': 'Der Browser-Sprachdienst ist nicht freigegeben. Prüfe die Mikrofon- und Spracheingabe-Berechtigung.',
-      'no-speech': 'Ich habe keine Sprache erkannt. Tippe das Mikrofon an und sprich direkt nach dem Start.',
-      'audio-capture': 'Der Browser findet kein verfügbares Mikrofon. Prüfe, ob ein anderes Programm es gerade nutzt.',
-      'network': 'Die Online-Spracherkennung des Browsers ist nicht erreichbar. Bard selbst ist davon getrennt; nutze den Sprachmodus oder prüfe die Browser-Verbindung.',
-      'language-not-supported': 'Die Gerätesprache wird von der Spracheingabe nicht unterstützt.'
-    };
-    notice(messages[event.error] || 'Die Spracheingabe ist abgebrochen. Dein bisheriger Text bleibt erhalten; tippe zum erneuten Start auf das Mikrofon.', true);
-  };
-  recognition.onend = () => {
-    const stoppedByUser = state.dictationStopRequested;
-    if (state.dictation === recognition) state.dictation = null;
-    state.dictationStopRequested = false;
-    state.dictationStarted = false;
-    $('#dictationButton').classList.remove('recording');
-    $('#dictationButton').setAttribute('aria-pressed', 'false');
-    if (stoppedByUser || !$('#notice').classList.contains('error')) notice('');
-  };
-  $('#dictationButton').classList.add('recording');
-  $('#dictationButton').setAttribute('aria-pressed', 'true');
-  notice('Prüfe die lokale Spracheingabe …');
-  void startDictationRecognition(recognition, Recognition);
+  void startLiveDictation();
 }
 $('#dictationButton').addEventListener('click', toggleDictation);
 $('#sendButton').addEventListener('click', () => void submitPrompt());
