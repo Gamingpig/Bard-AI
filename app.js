@@ -290,7 +290,7 @@ function readVoiceSample(name) {
   return dbPromise.then(db => idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').get(name)));
 }
 let voiceSampleCacheResetPromise;
-const VOICE_SAMPLE_CACHE_VERSION = '3';
+const VOICE_SAMPLE_CACHE_VERSION = '4';
 const voiceSampleJobs = new Map();
 async function resetOldVoiceSamples() {
   if (!voiceSampleCacheResetPromise) voiceSampleCacheResetPromise = (async () => {
@@ -1025,16 +1025,18 @@ function recordLiveModelResult(model, elapsed, succeeded) {
   stats[model] = row;
   writeStored('bard_live_model_stats', JSON.stringify(stats));
 }
-async function requestLiveTextReply(text, codePreview = false, onUpdate = () => {}, imageAttachment = null) {
+async function requestLiveTextReply(text, codePreview = false, onUpdate = () => {}, imageAttachment = null, options = {}) {
   let audioContext;
   try {
     audioContext = new AudioContext({ latencyHint: 'interactive' });
     void audioContext.resume().catch(() => {});
   } catch {}
-  const livePrompt = codePreview
-    ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Falls der Tool-Aufruf nicht verfügbar ist, gib dasselbe Dokument in einem ```html-Codeblock aus, damit die App es direkt als Vorschau anzeigen kann. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
-    : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus.';
-  const fullContext = buildLiveContext().slice(0, -1);
+  const livePrompt = options.voiceSample
+    ? text
+    : codePreview
+      ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Falls der Tool-Aufruf nicht verfügbar ist, gib dasselbe Dokument in einem ```html-Codeblock aus, damit die App es direkt als Vorschau anzeigen kann. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
+      : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus.';
+  const fullContext = options.voiceSample ? [] : buildLiveContext().slice(0, -1);
   // Long prompts get compact recent context to keep their input-token footprint lower.
   const requestContext = text.length > 1200
     ? fullContext.slice(-2).map(item => ({ ...item, text: String(item.text || '').slice(-400) }))
@@ -1043,7 +1045,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     responseMode: 'creative',
     userName: state.name,
     memory: state.memory,
-    voiceName: state.voice.voiceName || 'Puck',
+    voiceName: options.voiceName || state.voice.voiceName || 'Puck',
     context: requestContext
   };
   const candidates = liveModelOrder().map(model => ({ ...tokenRequest, model }));
@@ -2101,10 +2103,31 @@ function voiceSampleBlob(sample) {
   return new Blob([wav], { type: 'audio/wav' });
 }
 async function requestVoiceSample(name, run) {
-  const sample = await requestWorker('/api/voice-preview', { voiceName: name });
-  if (!sample.data || !sample.mimeType) throw new Error('Der Sprachdienst hat keine Hörprobe zurückgegeben.');
-  if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
-  return { ...sample, source: 'tts-preview' };
+  const spokenLine = 'Hallo! Ich bin Bard AI. Schön, mit dir zu sprechen. Das ist eine kurze Stimmprobe.';
+  const result = await requestLiveTextReply(
+    'Sprich ausschließlich diesen Satz natürlich und freundlich vor, ohne etwas hinzuzufügen: "' + spokenLine + '"',
+    false, () => {}, null, { voiceSample: true, voiceName: name }
+  );
+  try {
+    if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
+    const chunks = Array.isArray(result.audio) ? result.audio.filter(Boolean) : [];
+    if (!chunks.length) throw new Error('Der Textkanal hat keine Audio-Hörprobe geliefert.');
+    const decoded = chunks.map(chunk => atob(chunk));
+    const byteLength = decoded.reduce((total, chunk) => total + chunk.length, 0);
+    if (!byteLength) throw new Error('Der Textkanal hat eine leere Hörprobe geliefert.');
+    const bytes = new Uint8Array(byteLength);
+    let offset = 0;
+    for (const chunk of decoded) {
+      for (let index = 0; index < chunk.length; index++) bytes[offset++] = chunk.charCodeAt(index);
+    }
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    }
+    return { voiceName: name, data: btoa(binary), mimeType: 'audio/pcm;rate=24000', source: 'live-v1' };
+  } finally {
+    result.audioContext?.close().catch(() => {});
+  }
 }
 async function playVoicePreview(name, button) {
   if (state.voice.active) {
