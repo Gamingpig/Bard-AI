@@ -47,10 +47,20 @@ function setupUiFeedback() {
     const saved = readStored('bard_ui_motion');
     const enabled = saved === null ? !reduced : saved === 'true';
     motion.checked = enabled;
-    document.documentElement.classList.toggle('motion-enabled', enabled);
+    const setMotionPreference = value => {
+      document.documentElement.classList.toggle('motion-enabled', value);
+      document.documentElement.classList.toggle('motion-disabled', !value);
+    };
+    setMotionPreference(enabled);
     motion.addEventListener('change', () => {
       writeStored('bard_ui_motion', String(motion.checked));
-      document.documentElement.classList.toggle('motion-enabled', motion.checked);
+      setMotionPreference(motion.checked);
+    });
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', event => {
+      if (readStored('bard_ui_motion') === null) {
+        motion.checked = !event.matches;
+        setMotionPreference(motion.checked);
+      }
     });
   }
   const sound = $('#buttonSoundToggle'), haptics = $('#buttonHapticsToggle');
@@ -302,18 +312,20 @@ function persistMessages() {
   }));
 }
 function idbRequest(request) { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); }); }
+let profileWriteQueue = Promise.resolve();
 function persistProfile() {
   const name = state.name.trim().slice(0, 60);
   const memory = state.memory.slice(-24);
   writeStored('bard_user_name', name);
   writeStored('bard_memory', JSON.stringify(memory));
   const record = { key: 'user', name, memory, updated: Date.now() };
-  return dbPromise.then(db => new Promise((resolve, reject) => {
+  profileWriteQueue = profileWriteQueue.catch(() => {}).then(() => dbPromise.then(db => new Promise((resolve, reject) => {
     const tx = db.transaction('profile', 'readwrite');
     tx.objectStore('profile').put(record);
     tx.oncomplete = resolve;
     tx.onerror = tx.onabort = () => reject(tx.error || new Error('Profil konnte nicht gespeichert werden.'));
-  }));
+  })));
+  return profileWriteQueue;
 }
 async function restoreProfile() {
   const db = await dbPromise;
@@ -323,7 +335,13 @@ async function restoreProfile() {
   if (storedName !== null) state.name = storedName.trim().slice(0, 60);
   else if (backup?.name) state.name = String(backup.name).trim().slice(0, 60);
   if (storedMemory !== null) {
-    try { const value = JSON.parse(storedMemory); state.memory = Array.isArray(value) ? value.filter(item => typeof item === 'string').slice(-24) : []; } catch { state.memory = []; }
+    try {
+      const value = JSON.parse(storedMemory);
+      if (!Array.isArray(value)) throw new Error('Ungültiges lokales Memory.');
+      state.memory = value.filter(item => typeof item === 'string').slice(-24);
+    } catch {
+      state.memory = Array.isArray(backup?.memory) ? backup.memory.filter(item => typeof item === 'string').slice(-24) : [];
+    }
   } else if (Array.isArray(backup?.memory)) state.memory = backup.memory.filter(item => typeof item === 'string').slice(-24);
   const migrationKey = 'bard_memory_sensitive_purged_v1';
   if (readStored(migrationKey) !== 'done') {
@@ -901,21 +919,24 @@ function captureConversationMemory(text) {
   const normalized = String(text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!normalized) return false;
   let changed = false;
-  const nameMatch = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bmein vorname ist|\bnenn mich|\bdu kannst mich nennen)\s+([\p{L}][\p{L}\p{M}'’-]{0,39})/iu);
-  const invalidNames = new Set(['müde','muede','hungrig','durstig','krank','glücklich','gluecklich','traurig','bereit','gerade','ein','eine','am','im','nicht','nur','auch','heute','hier']);
-  const promptedName = !state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden')) ? normalized.match(/^ich bin\s+([\p{L}][\p{L}\p{M}'’-]{0,39})[.!]?$/iu) : null;
-  const candidateName = nameMatch?.[1] || promptedName?.[1];
-  if (candidateName && !invalidNames.has(candidateName.toLocaleLowerCase('de')) && candidateName !== state.name) {
+  const directName = normalized.match(/(?:\bich heiße|\bich heisse|\bmein name ist|\bmein vorname ist|\bmeine (?:gewünschte )?anrede(?: ist|:)?|\bname(?: ist|:)|\bmy name is|\bi am called|\bcall me|\bnenn mich|\bdu kannst mich nennen|\bich möchte mit|sprich mich mit)\s+([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)(?=\s+(?:und|aber|weil|dass|ich|du)\b|[,.;!?]|$)/iu);
+  const rememberedName = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bremember(?: that)?)(?:[\s,:-]+bitte\b)?[\s,:-]+(?:meinen namen(?:\s*(?:ist|:|als))?|meine (?:gewünschte )?anrede(?:\s*(?:ist|:|als))?|my name(?:\s*(?:is|:))?|dass\s+ich\s+(?:heiße|heisse)|dass\s+mein name\s+ist|ich\s+(?:heiße|heisse)|mein name ist|nenn mich|call me)\s+([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)(?=\s+(?:und|aber|weil|dass|ich|du)\b|[,.;!?]|$)/iu);
+  const rememberedReversedName = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran)(?:[\s,:-]+bitte\b)?[\s,:-]+(?:dass\s+ich\s+([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)\s+(?:heiße|heisse|bin)|dass\s+mein\s+name\s+([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)\s+ist)/iu);
+  const invalidNames = new Set(['müde','muede','hungrig','durstig','krank','glücklich','gluecklich','traurig','bereit','gerade','angehender','angehende','fachinformatiker','auszubildender','auszubildende','student','studentin','schüler','schülerin','entwickler','entwicklerin','selbstständig','selbstständiger','ein','eine','am','im','nicht','nur','auch','heute','hier','und','aber','weil','dass','bin']);
+  const promptedName = !state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden')) ? normalized.match(/^ich bin\s+([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu) : null;
+  const candidateName = rememberedName?.[1] || rememberedReversedName?.[1] || rememberedReversedName?.[2] || directName?.[1] || promptedName?.[1];
+  const nameRequest = /(?:merk(?:e)? dir|speicher(?:e)? dir|denk dran|remember).{0,65}(?:meinen namen|mein name|gewünschte anrede|my name|dass ich.{0,28}(?:heiße|heisse))/iu.test(normalized);
+  if (candidateName && !candidateName.toLocaleLowerCase('de').split(/\s+/).some(part => invalidNames.has(part)) && candidateName !== state.name) {
     saveUserName(candidateName); changed = true;
   } else if (!state.name && (assistantAskedForName() || !$('#nameForm').classList.contains('hidden'))) {
-    const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu);
+    const shortAnswer = normalized.match(/^([\p{L}][\p{L}\p{M}'’-]{0,39}(?:\s+(?!(?:und|aber|weil|dass|ich|du)\b)[\p{L}][\p{L}\p{M}'’-]{0,39})?)[.!]?$/iu);
     const filler = new Set(['ja','nein','okay','ok','klar','hi','hallo','hey','test','bro','danke','ich','du','mich','dich','weiß','weiss']);
     if (shortAnswer && shortAnswer[1].split(/\s+/).every(part => !filler.has(part.toLocaleLowerCase('de')))) {
       saveUserName(shortAnswer[1]); changed = true;
     }
   }
   const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte|\bbitte nicht vergessen)[\s,:-]+(?:dass\s+)?(.+)/iu);
-  if (explicit?.[1]) changed = remember(`Ausdrücklich merken (vom Nutzer gewünscht): ${explicit[1]}`) || changed;
+  if (explicit?.[1] && !nameRequest) changed = remember('Ausdrücklich merken (vom Nutzer gewünscht): ' + explicit[1]) || changed;
   const isTemporary = isTemporaryMemoryFact(normalized);
   const stableFactPatterns = [
     /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study)\s+([^.!?\n]{2,140})/iu,
@@ -2060,7 +2081,7 @@ matchMedia('(prefers-color-scheme: light)').addEventListener('change', event => 
 });
 if (state.name) $('#nameForm').classList.add('hidden');
 $('#nameForm').addEventListener('submit', event => { event.preventDefault(); const value = $('#userName').value.trim(); if (value) { saveUserName(value); notice('Name auf diesem Gerät gespeichert und wird bei jeder Anfrage mitgesendet.'); } });
-$('#memoryForm').addEventListener('submit', event => { event.preventDefault(); const input = $('#memoryInput'); if (remember(input.value)) { input.value = ''; notice('Im Memory auf diesem Gerät gespeichert.'); } });
+$('#memoryForm').addEventListener('submit', event => { event.preventDefault(); const input = $('#memoryInput'); const value = input.value.trim(); if (captureConversationMemory(value) || remember(value)) { input.value = ''; notice('Im Memory auf diesem Gerät gespeichert.'); } });
 renderMemory();
 const greetings = [{ title: 'Was hast du<br>auf dem Herzen?', copy: 'Erzähl mir, woran du gerade denkst.' }, { title: 'Lust auf eine<br>neue Idee?', copy: 'Wir können planen, schreiben oder etwas ausprobieren.' }, { title: 'Womit starten<br>wir heute?', copy: 'Frag drauflos, sprich mit mir oder gestalte ein Bild.' }, { title: 'Was möchtest<br>du entdecken?', copy: 'Ich bin bereit für deine nächste Frage.' }, { title: 'Zeit für etwas<br>Spannendes?', copy: 'Bring eine Idee mit — den Rest entwickeln wir zusammen.' }];
 const greeting = greetings[Math.floor(Math.random() * greetings.length)];

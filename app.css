@@ -613,3 +613,60 @@ button.scroll-to-bottom:active { transform:none; translate:-50% 0; scale:.94; }
   :root.motion-enabled .scroll-to-bottom::before { animation:scroll-halo 2.4s ease-out infinite !important; }
   :root.motion-enabled .composer { transition:border-color .22s ease,box-shadow .22s ease,background-color .22s ease !important; }
 }
+
+
+/* Motion and visual language are shared by the main chat and every app-owned window. */
+@keyframes bard-window-in { from { opacity:0; transform:translateY(12px) scale(.985); filter:blur(5px); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
+@keyframes bard-backdrop-in { from { opacity:0; } to { opacity:1; } }
+@keyframes bard-live-stage-in { from { opacity:0; transform:scale(1.018); } to { opacity:1; transform:scale(1); } }
+@keyframes bard-control-arrive { from { opacity:0; transform:translateY(7px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes bard-card-arrive { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+dialog.chat-dialog[open], dialog.voice-picker-dialog[open], dialog.live-preview-dialog[open] { animation:bard-window-in .3s cubic-bezier(.2,.8,.2,1) both; }
+dialog[open]::backdrop { animation:bard-backdrop-in .24s ease-out both; }
+#voiceDialog[open] .voice-scene { animation:bard-live-stage-in .38s cubic-bezier(.2,.8,.2,1) both; }
+.voice-header,.voice-live-state,.voice-state-hint,.voice-media-tools,.voice-transcript-panel,.voice-controls,.voice-footnote { animation:bard-card-arrive .34s cubic-bezier(.2,.8,.2,1) both; }
+.voice-live-state { animation-delay:.04s; }
+.voice-media-tools { animation-delay:.08s; }
+.voice-transcript-panel { animation-delay:.12s; }
+.voice-controls { animation-delay:.16s; }
+.voice-transcript-entry,.voice-choice-card,.saved-chat,.settings-memory > summary,.feedback-settings label { animation:bard-card-arrive .24s ease-out both; }
+.voice-control,.voice-end,.voice-icon-button,.voice-picker-trigger,.visual-capture-button,.voice-choice-use,.voice-choice-delete,.memory-remove,.saved-chat-open,.delete-chat { transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s ease,background-color .18s ease,box-shadow .2s ease,filter .18s ease; }
+.voice-control:not(:disabled):hover,.voice-end:not(:disabled):hover,.voice-icon-button:not(:disabled):hover,.visual-capture-button:not(:disabled):hover,.voice-choice-use:not(:disabled):hover,.saved-chat-open:hover { transform:translateY(-2px); box-shadow:0 8px 22px #0003; }
+.voice-control:not(:disabled):active,.voice-end:not(:disabled):active,.voice-icon-button:not(:disabled):active,.voice-picker-trigger:active,.visual-capture-button:not(:disabled):active,.voice-choice-use:not(:disabled):active { transform:scale(.97); }
+.voice-transcript-panel,.live-preview-shell,.voice-picker-shell,.chat-dialog,.settings-dialog { background-image:linear-gradient(145deg,color-mix(in srgb,var(--cyan) 3%,transparent),transparent 48%,color-mix(in srgb,var(--violet) 3%,transparent)); }
+.voice-transcript-entry.assistant { box-shadow:inset 0 1px #ffffff08,0 5px 16px #0002; }
+.voice-transcript-entry.user { box-shadow:inset 0 1px #ffffff08,0 5px 16px #0002; }
+.voice-choice-card:hover,.saved-chat:hover { border-color:color-mix(in srgb,var(--cyan) 48%,var(--line)); box-shadow:0 10px 28px #0003; }
+.voice-choice-card.selected { box-shadow:0 0 0 1px color-mix(in srgb,var(--cyan) 40%,transparent),0 12px 30px color-mix(in srgb,var(--cyan) 10%,transparent); }
+.voice-transcript-entry.voice-preview-entry { border-color:color-mix(in srgb,var(--violet) 44%,var(--line)); }
+:root.motion-disabled *, :root.motion-disabled *::before, :root.motion-disabled *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+@media (prefers-reduced-motion:reduce) {
+  :root.motion-enabled dialog.chat-dialog[open],
+  :root.motion-enabled dialog.voice-picker-dialog[open],
+  :root.motion-enabled dialog.live-preview-dialog[open] { animation:bard-window-in .3s cubic-bezier(.2,.8,.2,1) both !important; }
+  :root.motion-enabled dialog[open]::backdrop { animation:bard-backdrop-in .24s ease-out both !important; }
+  :root.motion-enabled #voiceDialog[open] .voice-scene { animation:bard-live-stage-in .38s cubic-bezier(.2,.8,.2,1) both !important; }
+  :root.motion-enabled #voiceDialog .voice-scene::before,
+  :root.motion-enabled #voiceDialog .voice-scene::after { animation:voice-drift 17s ease-in-out infinite alternate !important; }
+  :root.motion-enabled #voiceDialog .voice-orb { animation:bard-shape 8s ease-in-out infinite,bard-think 2s ease-in-out infinite !important; }
+  :root.motion-enabled #voiceDialog .voice-scene[data-state="listening"] .voice-orb { animation:bard-shape 13s ease-in-out infinite,bard-listen 3.2s ease-in-out infinite !important; }
+  :root.motion-enabled #voiceDialog .voice-scene[data-state="speaking"] .voice-orb { animation:bard-shape 7s ease-in-out infinite,bard-speak .78s ease-in-out infinite alternate !important; }
+  :root.motion-enabled #voiceDialog .voice-orb-cloud { animation:bard-cloud 18s ease-in-out infinite alternate !important; }
+  :root.motion-enabled #voiceDialog .voice-orb-aura { animation:bard-aura 3.4s ease-in-out infinite !important; }
+  :root.motion-enabled #voiceDialog .voice-orb img { animation:bard-mark-glow 2.8s ease-in-out infinite !important; }
+  :root.motion-enabled #voiceDialog .voice-state-pip { animation:voice-pip 1.1s ease-in-out infinite alternate !important; }
+  :root.motion-enabled #voiceDialog .voice-transcript-entry,
+  :root.motion-enabled #voiceDialog .voice-controls > *,
+  :root.motion-enabled #voicePickerDialog .voice-choice-card,
+  :root.motion-enabled #settingsDialog .feedback-settings label,
+  :root.motion-enabled #chatDialog .saved-chat { animation:bard-card-arrive .24s ease-out both !important; }
+  :root.motion-enabled #voiceDialog .voice-control,
+  :root.motion-enabled #voiceDialog .voice-end,
+  :root.motion-enabled #voiceDialog .voice-icon-button,
+  :root.motion-enabled #voiceDialog .visual-capture-button,
+  :root.motion-enabled #voicePickerDialog .voice-choice-use,
+  :root.motion-enabled #voicePickerDialog .voice-choice-delete,
+  :root.motion-enabled #settingsDialog .memory-remove,
+  :root.motion-enabled #chatDialog .saved-chat-open,
+  :root.motion-enabled #chatDialog .delete-chat { transition:transform .18s ease,border-color .18s ease,background-color .18s ease,box-shadow .2s ease !important; }
+}
