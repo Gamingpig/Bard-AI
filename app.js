@@ -736,11 +736,15 @@ function updateScrollToBottomButton() {
   button.hidden = !shouldShow;
   button.classList.toggle('is-visible', shouldShow);
   if (!shouldShow) return;
-  const anchor = $('.composer-wrap')?.getBoundingClientRect() || $('#prompt')?.getBoundingClientRect();
-  if (!anchor) return;
-  const centerX = anchor.left + anchor.width / 2;
+  const anchor = $('.composer-wrap')?.getBoundingClientRect();
+  const inputRect = $('#prompt')?.getBoundingClientRect();
+  if (!anchor || !inputRect) return;
+  const centerX = inputRect.left + inputRect.width / 2;
   const left = Math.max(8, Math.min(window.innerWidth - button.offsetWidth - 8, centerX - button.offsetWidth / 2));
-  const topPosition = Math.max(8, anchor.top - button.offsetHeight - 16);
+  const topPosition = anchor.top - button.offsetHeight - 16;
+  if (topPosition < 8 || topPosition + button.offsetHeight > window.innerHeight - 8) {
+    button.hidden = true; button.classList.remove('is-visible'); return;
+  }
   button.style.left = `${left}px`;
   button.style.top = `${topPosition}px`;
   button.style.bottom = 'auto';
