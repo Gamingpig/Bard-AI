@@ -732,12 +732,17 @@ function updateScrollToBottomButton() {
   const page = target === document.scrollingElement || target === document.documentElement;
   const top = page ? window.scrollY : target.scrollTop;
   const viewport = page ? window.innerHeight : target.clientHeight;
-  button.hidden = target.scrollHeight - viewport - top < 96;
-  if (button.hidden) return;
-  const inputRect = $('#prompt')?.getBoundingClientRect();
-  if (!inputRect) return;
-  button.style.left = `${inputRect.left + inputRect.width / 2}px`;
-  button.style.top = `${Math.max(8, inputRect.top - button.offsetHeight - 8)}px`;
+  const shouldShow = target.scrollHeight - viewport - top >= 96;
+  button.hidden = !shouldShow;
+  button.classList.toggle('is-visible', shouldShow);
+  if (!shouldShow) return;
+  const anchor = $('.composer-wrap')?.getBoundingClientRect() || $('#prompt')?.getBoundingClientRect();
+  if (!anchor) return;
+  const centerX = anchor.left + anchor.width / 2;
+  const left = Math.max(8, Math.min(window.innerWidth - button.offsetWidth - 8, centerX - button.offsetWidth / 2));
+  const topPosition = Math.max(8, anchor.top - button.offsetHeight - 16);
+  button.style.left = `${left}px`;
+  button.style.top = `${topPosition}px`;
   button.style.bottom = 'auto';
 }
 function scrollToBottom(element, behavior = 'auto') {
@@ -932,10 +937,13 @@ function renderMessages() {
 function typing(show) {
   let row = $('#typingRow');
   if (show && !row) {
-    row = document.createElement('div'); row.id = 'typingRow'; row.className = 'message assistant';
+    row = document.createElement('div'); row.id = 'typingRow'; row.className = 'message assistant thinking-row';
     const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = '✦';
-    const bubble = document.createElement('div'); bubble.className = 'bubble typing'; bubble.textContent = 'Bard denkt nach …';
-    row.append(avatar, bubble); $('#messages').append(row);
+    const bubble = document.createElement('div'); bubble.className = 'bubble typing typing-indicator';
+    const label = document.createElement('span'); label.className = 'thinking-label'; label.textContent = 'Bard schreibt';
+    const dots = document.createElement('span'); dots.className = 'thinking-dots'; dots.setAttribute('aria-hidden', 'true');
+    for (let index = 0; index < 3; index++) dots.append(document.createElement('i'));
+    bubble.append(label, dots); row.append(avatar, bubble); $('#messages').append(row);
   } else if (!show) row?.remove();
   if (show) scrollConversationToBottom();
 }
@@ -1272,6 +1280,7 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
         result = await requestLiveTextReply(requestText, codePreview, partialText => {
           if (!partialText) return;
           if (!draftRow) {
+            typing(false);
             draftRow = renderMessage({ role: 'assistant', text: partialText }, false);
             draftRow.classList.add('streaming');
           } else {
