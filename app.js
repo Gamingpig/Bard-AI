@@ -750,21 +750,6 @@ function updateScrollToBottomButton(event) {
   const shouldShow = target.scrollHeight - viewport - top >= 64;
   button.hidden = !shouldShow;
   button.classList.toggle('is-visible', shouldShow);
-  if (!shouldShow) return;
-  const composer = $('.composer-wrap')?.getBoundingClientRect();
-  const input = $('#prompt')?.getBoundingClientRect();
-  if (!composer || !input) return;
-  const centerX = input.left + input.width / 2;
-  const left = Math.max(8, Math.min(window.innerWidth - button.offsetWidth - 8, centerX - button.offsetWidth / 2));
-  const topPosition = composer.top - button.offsetHeight - 16;
-  if (topPosition < 8 || topPosition + button.offsetHeight > window.innerHeight - 8) {
-    button.hidden = true;
-    button.classList.remove('is-visible');
-    return;
-  }
-  button.style.left = `${left}px`;
-  button.style.top = `${topPosition}px`;
-  button.style.bottom = 'auto';
 }
 function scrollToBottom(element, behavior = 'auto') {
   if (!element || bottomScrollFrames.has(element)) return;

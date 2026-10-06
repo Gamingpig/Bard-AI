@@ -556,3 +556,7 @@ button:not(:disabled):active { transform:scale(.975); }
   .thinking-avatar,.typing-indicator::before,.typing-indicator::after,.thinking-dots i,.connection.busy i,.message.streaming .bubble::after { animation:none !important; }
   .thinking-dots i { opacity:.8; }
 }
+
+/* The jump control is anchored to the sticky composer, never to a stale viewport coordinate. */
+.composer-wrap { position:sticky; isolation:isolate; }
+.scroll-to-bottom { position:absolute; left:50%; top:-40px; right:auto; bottom:auto; }
