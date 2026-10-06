@@ -10,6 +10,51 @@ document.addEventListener('visibilitychange', () => {
 }, { passive: true });
 function readStored(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function writeStored(key, value) { try { localStorage.setItem(key, value); return true; } catch { return false; } }
+let uiFeedbackContext = null;
+let uiFeedbackCloseTimer = 0;
+function playUiButtonFeedback() {
+  if (readStored('bard_ui_button_haptics') !== 'false' && typeof navigator.vibrate === 'function') {
+    try { navigator.vibrate(9); } catch {}
+  }
+  if (readStored('bard_ui_button_sound') === 'false') return;
+  const AudioContextType = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextType) return;
+  try {
+    if (!uiFeedbackContext || uiFeedbackContext.state === 'closed') uiFeedbackContext = new AudioContextType({ latencyHint: 'interactive' });
+    const context = uiFeedbackContext;
+    void context.resume().catch(() => {});
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(720, now);
+    oscillator.frequency.exponentialRampToValueAtTime(470, now + 0.035);
+    gain.gain.setValueAtTime(0.014, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+    oscillator.connect(gain); gain.connect(context.destination);
+    oscillator.start(now); oscillator.stop(now + 0.05);
+    clearTimeout(uiFeedbackCloseTimer);
+    uiFeedbackCloseTimer = setTimeout(() => {
+      context.close().catch(() => {});
+      if (uiFeedbackContext === context) uiFeedbackContext = null;
+    }, 900);
+  } catch {}
+}
+function setupUiFeedback() {
+  const sound = $('#buttonSoundToggle'), haptics = $('#buttonHapticsToggle');
+  if (sound) {
+    sound.checked = readStored('bard_ui_button_sound') !== 'false';
+    sound.addEventListener('change', () => writeStored('bard_ui_button_sound', String(sound.checked)));
+  }
+  if (haptics) {
+    haptics.checked = readStored('bard_ui_button_haptics') !== 'false';
+    haptics.addEventListener('change', () => writeStored('bard_ui_button_haptics', String(haptics.checked)));
+  }
+  document.addEventListener('click', event => {
+    const button = event.target.closest?.('button');
+    if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true' && button.dataset.feedback !== 'off') playUiButtonFeedback();
+  });
+}
 const LIVE_VOICES = [
   { name: 'Zephyr', style: 'Hell' },
   { name: 'Puck', style: 'Lebhaft' },
@@ -52,6 +97,10 @@ function isSensitiveMemoryFact(value) {
     /\b(?:einkommen|gehalt|budget|finanzen|bankkonto|konto|kreditkarte|schulden|ich verdiene|salary|income|financ|bank account|credit card|debt)\b/iu,
     /\b(?:ich wohne in|ich lebe in|mein wohnort|i live at|my home is)\b/iu
   ].some(pattern => pattern.test(text));
+}
+function isTemporaryMemoryFact(value) {
+  const text = String(value || '');
+  return /\b(?:heute|nur vorübergehend|vorübergehend|temporär|nur für diesen chat|für dieses gespräch|in dieser vorschau|(?:vorschau|entwurf|prototyp|demo|generierte grafik)|diese[rsm]?\s+(?:animation|grafik|seite|würfel|cube)|diesen\s+(?:würfel|cube)|dieses\s+(?:bild|modell|projekt)|ich\s+(?:mag|liebe|bevorzuge)\s+(?:das|diese[rsm]?\s+(?:bild|animation|grafik)))\b/iu.test(text);
 }
 
 const dbPromise = new Promise((resolve, reject) => {
@@ -272,6 +321,15 @@ async function restoreProfile() {
       try { await persistProfile(); writeStored(migrationKey, 'done'); } catch {}
     } else writeStored(migrationKey, 'done');
   }
+  const qualityMigrationKey = 'bard_memory_quality_v2';
+  if (readStored(qualityMigrationKey) !== 'done') {
+    const usefulMemory = state.memory.filter(item => !isTemporaryMemoryFact(item));
+    if (usefulMemory.length !== state.memory.length) {
+      state.memory = usefulMemory;
+      try { await persistProfile(); } catch {}
+    }
+    writeStored(qualityMigrationKey, 'done');
+  }
   writeStored('bard_user_name', state.name);
   writeStored('bard_memory', JSON.stringify(state.memory));
   $('#userName').value = state.name;
@@ -290,7 +348,7 @@ function readVoiceSample(name) {
   return dbPromise.then(db => idbRequest(db.transaction('voiceSamples').objectStore('voiceSamples').get(name)));
 }
 let voiceSampleCacheResetPromise;
-const VOICE_SAMPLE_CACHE_VERSION = '4';
+const VOICE_SAMPLE_CACHE_VERSION = '5';
 const voiceSampleJobs = new Map();
 async function resetOldVoiceSamples() {
   if (!voiceSampleCacheResetPromise) voiceSampleCacheResetPromise = (async () => {
@@ -352,7 +410,7 @@ async function refreshVoicePickerStatus() {
     if ($('#voicePickerDialog').open && !voicePreviewAudio) {
       $('#voicePickerStatus').textContent = ready >= LIVE_VOICES.length
         ? `${ready} von ${LIVE_VOICES.length} Hörproben sind auf diesem Gerät bereit.`
-        : `${ready} von ${LIVE_VOICES.length} Hörproben bereit · weitere werden im Hintergrund geladen.`;
+        : `${ready} von ${LIVE_VOICES.length} Hörproben bereit · weitere werden bei Bedarf geladen.`;
     }
   } catch {}
 }
@@ -383,10 +441,28 @@ function pauseVoicePreload(error) {
 }
 async function preloadVoiceSamples() {
   try {
-    // Startup only checks local storage; it must never spend provider quota in the background.
     await resetOldVoiceSamples();
+    if (preloadPauseUntil() > Date.now() || navigator.onLine === false || navigator.connection?.saveData) return;
+    if (state.busy || state.voice.active || document.hidden) {
+      voicePreloadStarted = false;
+      setTimeout(() => { if (!state.busy && !state.voice.active && !document.hidden) scheduleVoiceSamplePreload(); }, 15000);
+      return;
+    }
+    const selected = LIVE_VOICES.find(voice => voice.name === state.voice.voiceName)?.name;
+    if (!selected) return;
+    const saved = await readVoiceSample(selected);
+    if (saved?.data && saved?.mimeType) return;
+    // Prepare only the selected voice after the app is idle; all others remain on demand.
+    await ensureVoiceSample(selected);
     if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
-  } catch {}
+  } catch (error) {
+    pauseVoicePreload(error);
+    if ($('#voicePickerDialog').open && !voicePreviewAudio) {
+      $('#voicePickerStatus').textContent = error?.failureKind === 'provider-quota' || error?.status === 429
+        ? 'Die ausgewählte Hörprobe wartet auf verfügbares Live-Kontingent.'
+        : 'Die Hörprobe wird erst erstellt, wenn du sie auswählst.';
+    }
+  }
 }
 function saveVoiceSample(sample) {
   return dbPromise.then(db => new Promise((resolve, reject) => {
@@ -414,17 +490,6 @@ function makeLiveVoiceSample(name, chunks, maxBytes = 96_000) {
   }
   return { voiceName: name, data: btoa(binary), mimeType: 'audio/pcm;rate=24000', source: 'live-v1' };
 }
-async function cacheTextReplyAsVoiceSample(name, chunks) {
-  try {
-    await resetOldVoiceSamples();
-    if (!name || voiceSampleJobs.has(name)) return;
-    const saved = await readVoiceSample(name);
-    if (saved?.data && saved?.mimeType) return;
-    const sample = makeLiveVoiceSample(name, chunks, 192_000);
-    if (sample) await saveVoiceSample(sample);
-  } catch {}
-}
-
 async function readChatMessages(db, chatId) {
   const range = IDBKeyRange.bound([chatId, 0], [chatId, Number.MAX_SAFE_INTEGER]);
   const rows = await idbRequest(db.transaction('messages').objectStore('messages').index('chatTime').getAll(range));
@@ -790,20 +855,21 @@ function captureConversationMemory(text) {
     }
   }
   const explicit = normalized.match(/(?:\bmerk(?:e)? dir|\bspeicher(?:e)? dir|\bdenk dran|\bmerke bitte|\bbitte nicht vergessen)[\s,:-]+(?:dass\s+)?(.+)/iu);
-  if (explicit?.[1]) changed = remember(explicit[1]) || changed;
+  if (explicit?.[1]) changed = remember(`Ausdrücklich merken (vom Nutzer gewünscht): ${explicit[1]}`) || changed;
+  const isTemporary = isTemporaryMemoryFact(normalized);
   const stableFactPatterns = [
     /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study)\s+([^.!?\n]{2,140})/iu,
     /\b(mein(?:e|en)? lieblings(?:farbe|film|serie|spiel|musik|band|buch|essen|getränk|sport|verein)? ist)\s+([^.!?\n]{2,100})/iu,
     /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu
   ];
   const capturedFacts = new Set();
-  for (const pattern of stableFactPatterns) {
+  if (!isTemporary) for (const pattern of stableFactPatterns) {
     const match = normalized.match(pattern);
     if (!match) continue;
     const fact = [match[1], match[2]].filter(Boolean).join(' ');
     if (fact && !capturedFacts.has(fact.toLocaleLowerCase('de'))) {
       capturedFacts.add(fact.toLocaleLowerCase('de'));
-      changed = remember(fact) || changed;
+      changed = remember(`Profilkontext (bei passenden Antworten berücksichtigen): ${fact}`) || changed;
     }
   }
   return changed;
@@ -858,7 +924,7 @@ function playLiveTextAudio(chunks, context) {
   }
   if (!remaining) context.close().catch(() => {});
 }
-function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}, imageAttachment = null) {
+function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}, imageAttachment = null, options = {}) {
   return new Promise((resolve, reject) => {
     const socketUrl = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(session.token);
     const socket = new WebSocket(socketUrl);
@@ -971,7 +1037,7 @@ function liveTextExchange(session, prompt, audioContext, onUpdate = () => {}, im
       const generationComplete = content.generationComplete || content.generation_complete;
       const turnComplete = content.turnComplete || content.turn_complete;
       // Show plain answers as soon as generation ends; turnComplete may wait for audio playback.
-      if ((generationComplete && !toolUsed) || turnComplete) {
+      if (options.waitForTurnComplete ? turnComplete : ((generationComplete && !toolUsed) || turnComplete)) {
         let text = answerText.trim();
         if (previewHtml) text += (text ? '\n\n' : '') + String.fromCharCode(96).repeat(3) + 'html\n' + previewHtml + '\n' + String.fromCharCode(96).repeat(3);
         if (!text) { finish(reject, new Error('Der Live-Kanal hat keine Textantwort geliefert.')); return; }
@@ -1032,7 +1098,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     ? text
     : codePreview
       ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Falls der Tool-Aufruf nicht verfügbar ist, gib dasselbe Dokument in einem ```html-Codeblock aus, damit die App es direkt als Vorschau anzeigen kann. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
-      : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus.';
+      : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus. Behandle mitgesendete Memory-Einträge als Profilkontext: nutze sie nur, wenn sie zur aktuellen Frage passen, und mache aus zeitlich begrenzten Wünschen keine dauerhaften Vorlieben. Wenn die integrierte Google-Suche verfügbar und für aktuelle oder unsichere Fakten, Nachrichten, Preise, Produktvergleiche oder Quellen hilfreich ist, nutze sie und biete sie bei passender Gelegenheit proaktiv an; verwende sie nicht für einfache Alltagsfragen.';
   const fullContext = options.voiceSample ? [] : buildLiveContext().slice(0, -1);
   // Long prompts get compact recent context to keep their input-token footprint lower.
   const requestContext = text.length > 1200
@@ -1040,8 +1106,8 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     : fullContext;
   const tokenRequest = {
     responseMode: 'creative',
-    userName: state.name,
-    memory: state.memory,
+    userName: options.voiceSample ? '' : state.name,
+    memory: options.voiceSample ? [] : state.memory,
     voiceName: options.voiceName || state.voice.voiceName || 'Puck',
     context: requestContext
   };
@@ -1052,7 +1118,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     try {
       const session = await requestWorker('/api/live-token', candidate);
       if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
-      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate, imageAttachment);
+      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate, imageAttachment, options);
       recordLiveModelResult(session.model, performance.now() - startedAt, true);
       return result;
     } catch (error) {
@@ -1169,7 +1235,6 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
       if (Array.isArray(result.audio) && result.audio.length) {
-        void cacheTextReplyAsVoiceSample(state.voice.voiceName || 'Puck', result.audio);
         playLiveTextAudio(result.audio, result.audioContext);
       }
       else result.audioContext?.close().catch(() => {});
@@ -2103,15 +2168,15 @@ function voiceSampleBlob(sample) {
   return new Blob([wav], { type: 'audio/wav' });
 }
 async function requestVoiceSample(name, run) {
-  const spokenLine = 'Hallo! Ich bin Bard AI. Schön, mit dir zu sprechen. Das ist eine kurze Stimmprobe.';
+  const spokenLine = 'Hallo, schön, dass du da bist!';
   const result = await requestLiveTextReply(
     'Sprich ausschließlich diesen Satz natürlich und freundlich vor, ohne etwas hinzuzufügen: "' + spokenLine + '"',
-    false, () => {}, null, { voiceSample: true, voiceName: name }
+    false, () => {}, null, { voiceSample: true, voiceName: name, waitForTurnComplete: true }
   );
   try {
     if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
     const chunks = Array.isArray(result.audio) ? result.audio.filter(Boolean) : [];
-    const sample = makeLiveVoiceSample(name, chunks, 240_000);
+    const sample = makeLiveVoiceSample(name, chunks, 480_000);
     if (!sample) throw new Error('Der Textkanal hat keine Audio-Hörprobe geliefert.');
     return sample;
   } finally {
@@ -2138,6 +2203,8 @@ async function playVoicePreview(name, button) {
     voicePreviewContext = new AudioContext({ latencyHint: 'interactive' });
     await voicePreviewContext.resume();
     let sample = await ensureVoiceSample(name, { run });
+    const clearCached = button.closest('.voice-choice-card')?.querySelector('[data-delete-voice-sample]');
+    if (clearCached) clearCached.hidden = false;
     if (run !== voicePreviewRun) return;
     let audioBuffer;
     try {
@@ -2208,11 +2275,29 @@ function renderVoicePicker() {
     use.addEventListener('click', () => {
       state.voice.voiceName = voice.name;
       localStorage.setItem('bard_live_voice', voice.name);
+      voicePreloadStarted = false;
+      scheduleVoiceSamplePreload();
       updateVoicePickerTrigger();
       renderVoicePicker();
       $('#voicePickerStatus').textContent = `${voice.name} wird ab dem nächsten Live-Gespräch verwendet.`;
     });
-    actions.append(preview, use); card.append(label, actions); list.append(card);
+    const clear = document.createElement('button');
+    clear.type = 'button'; clear.className = 'voice-choice-delete'; clear.dataset.deleteVoiceSample = voice.name;
+    clear.textContent = 'Probe löschen'; clear.hidden = true; clear.title = 'Gespeicherte Hörprobe löschen; beim nächsten Anhören neu erstellen';
+    clear.addEventListener('click', async () => {
+      if (voicePreviewAudio?.name === voice.name) stopVoicePreview();
+      try {
+        await deleteVoiceSample(voice.name);
+        $('#voicePickerStatus').textContent = `${voice.name} · Hörprobe gelöscht und wird beim nächsten Anhören neu erstellt.`;
+        renderVoicePicker();
+      } catch {
+        $('#voicePickerStatus').textContent = `${voice.name} · Die gespeicherte Hörprobe konnte nicht gelöscht werden.`;
+      }
+    });
+    void readVoiceSample(voice.name).then(sample => {
+      if (clear.isConnected) clear.hidden = !(sample?.data && sample?.mimeType);
+    }).catch(() => {});
+    actions.append(preview, use, clear); card.append(label, actions); list.append(card);
   }
 }
 updateVoicePickerTrigger();
@@ -2290,6 +2375,7 @@ function setupAppUpdates() {
   }).catch(() => {});
 }
 setupAppUpdates();
+setupUiFeedback();
 
 
 
