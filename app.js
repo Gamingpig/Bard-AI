@@ -720,30 +720,47 @@ function addTextParts(parent, text) {
   addParagraphs(source.slice(cursor));
 }
 const bottomScrollFrames = new WeakMap();
+let preferredConversationScrollTarget = null;
 function getConversationScrollTarget() {
   const conversation = $('.conversation');
-  if (conversation && conversation.scrollHeight - conversation.clientHeight > 2) return conversation;
-  return document.scrollingElement || document.documentElement;
+  const page = document.scrollingElement || document.documentElement;
+  if (!conversation || !page) return page;
+  const conversationOverflow = conversation.scrollHeight - conversation.clientHeight;
+  const pageOverflow = page.scrollHeight - window.innerHeight;
+  if (preferredConversationScrollTarget === conversation && conversationOverflow > 2) return conversation;
+  if (preferredConversationScrollTarget === page && pageOverflow > 2) return page;
+  if (conversation.scrollTop > 2 && conversationOverflow > 2) return conversation;
+  if (window.scrollY > 2 && pageOverflow > 2) return page;
+  if (pageOverflow > 2 && conversationOverflow <= 2) return page;
+  if (conversationOverflow > 2) return conversation;
+  return page;
 }
-function updateScrollToBottomButton() {
+function updateScrollToBottomButton(event) {
+  const conversation = $('.conversation');
+  const pageTarget = document.scrollingElement || document.documentElement;
+  if (event?.type === 'scroll') {
+    preferredConversationScrollTarget = event.currentTarget === conversation ? conversation : pageTarget;
+  }
   const target = getConversationScrollTarget();
   const button = $('#scrollToBottom');
   if (!target || !button) return;
-  const page = target === document.scrollingElement || target === document.documentElement;
-  const top = page ? window.scrollY : target.scrollTop;
+  const page = target === pageTarget;
+  const top = page ? Math.max(window.scrollY, target.scrollTop) : target.scrollTop;
   const viewport = page ? window.innerHeight : target.clientHeight;
-  const shouldShow = target.scrollHeight - viewport - top >= 96;
+  const shouldShow = target.scrollHeight - viewport - top >= 64;
   button.hidden = !shouldShow;
   button.classList.toggle('is-visible', shouldShow);
   if (!shouldShow) return;
-  const anchor = $('.composer-wrap')?.getBoundingClientRect();
-  const inputRect = $('#prompt')?.getBoundingClientRect();
-  if (!anchor || !inputRect) return;
-  const centerX = inputRect.left + inputRect.width / 2;
+  const composer = $('.composer-wrap')?.getBoundingClientRect();
+  const input = $('#prompt')?.getBoundingClientRect();
+  if (!composer || !input) return;
+  const centerX = input.left + input.width / 2;
   const left = Math.max(8, Math.min(window.innerWidth - button.offsetWidth - 8, centerX - button.offsetWidth / 2));
-  const topPosition = anchor.top - button.offsetHeight - 16;
+  const topPosition = composer.top - button.offsetHeight - 16;
   if (topPosition < 8 || topPosition + button.offsetHeight > window.innerHeight - 8) {
-    button.hidden = true; button.classList.remove('is-visible'); return;
+    button.hidden = true;
+    button.classList.remove('is-visible');
+    return;
   }
   button.style.left = `${left}px`;
   button.style.top = `${topPosition}px`;
@@ -942,9 +959,9 @@ function typing(show) {
   let row = $('#typingRow');
   if (show && !row) {
     row = document.createElement('div'); row.id = 'typingRow'; row.className = 'message assistant thinking-row';
-    const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = '✦';
+    const avatar = document.createElement('div'); avatar.className = 'avatar thinking-avatar'; avatar.textContent = '✦';
     const bubble = document.createElement('div'); bubble.className = 'bubble typing typing-indicator';
-    const label = document.createElement('span'); label.className = 'thinking-label'; label.textContent = 'Bard schreibt';
+    const label = document.createElement('span'); label.className = 'thinking-label'; label.textContent = 'Bard denkt nach';
     const dots = document.createElement('span'); dots.className = 'thinking-dots'; dots.setAttribute('aria-hidden', 'true');
     for (let index = 0; index < 3; index++) dots.append(document.createElement('i'));
     bubble.append(label, dots); row.append(avatar, bubble); $('#messages').append(row);

@@ -538,3 +538,21 @@ button:not(:disabled):active { transform:scale(.975); }
 .composer { transition:border-color .22s ease,box-shadow .22s ease,background-color .22s ease; }
 .composer:focus-within { border-color:color-mix(in srgb,var(--cyan) 64%,var(--line)); box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 12%,transparent),0 14px 36px #0003; }
 @media(prefers-reduced-motion:reduce) { .composer { transition:none; } }
+
+
+/* Premium, low-cost composing state: depth, light sweep, pulse and live output cursor. */
+.thinking-row { align-items:center; }
+.thinking-avatar { position:relative; color:var(--cyan); font-size:20px; animation:thinking-mark 2.2s ease-in-out infinite; }
+@keyframes thinking-mark { 0%,100% { transform:scale(.94) rotate(-8deg); filter:drop-shadow(0 0 2px color-mix(in srgb,var(--cyan) 25%,transparent)); } 50% { transform:scale(1.08) rotate(8deg); filter:drop-shadow(0 0 8px color-mix(in srgb,var(--violet) 65%,transparent)); } }
+.typing-indicator { position:relative; overflow:hidden; isolation:isolate; background:linear-gradient(115deg,var(--surface) 0%,color-mix(in srgb,var(--violet) 9%,var(--surface)) 48%,var(--surface) 100%); }
+.typing-indicator::before { content:""; position:absolute; z-index:-1; top:0; bottom:0; left:-45%; width:35%; background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--cyan) 13%,transparent),transparent); transform:skewX(-18deg); animation:thinking-sweep 2.8s ease-in-out infinite; }
+.typing-indicator::after { content:""; position:absolute; bottom:0; left:8px; width:28%; height:2px; border-radius:2px; background:linear-gradient(90deg,var(--cyan),var(--violet),transparent); transform-origin:left; animation:thinking-progress 2.1s ease-in-out infinite; }
+@keyframes thinking-sweep { 0%,18% { left:-45%; opacity:0; } 32% { opacity:.9; } 72%,100% { left:120%; opacity:0; } }
+@keyframes thinking-progress { 0%,100% { transform:scaleX(.52); opacity:.55; } 50% { transform:scaleX(1.5); opacity:1; } }
+.thinking-dots i { width:5px; height:5px; animation:thinking-dot 1s cubic-bezier(.3,.1,.3,1) infinite; }
+.message.streaming .bubble { position:relative; }
+.message.streaming .bubble::after { width:2px; height:1.05em; margin-left:5px; border-radius:1px; box-shadow:0 0 8px color-mix(in srgb,var(--cyan) 75%,transparent); }
+@media(prefers-reduced-motion:reduce) {
+  .thinking-avatar,.typing-indicator::before,.typing-indicator::after,.thinking-dots i,.connection.busy i,.message.streaming .bubble::after { animation:none !important; }
+  .thinking-dots i { opacity:.8; }
+}
