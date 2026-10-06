@@ -41,6 +41,18 @@ function playUiButtonFeedback() {
   } catch {}
 }
 function setupUiFeedback() {
+  const motion = $('#motionEffectsToggle');
+  if (motion) {
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+    const saved = readStored('bard_ui_motion');
+    const enabled = saved === null ? !reduced : saved === 'true';
+    motion.checked = enabled;
+    document.documentElement.classList.toggle('motion-enabled', enabled);
+    motion.addEventListener('change', () => {
+      writeStored('bard_ui_motion', String(motion.checked));
+      document.documentElement.classList.toggle('motion-enabled', motion.checked);
+    });
+  }
   const sound = $('#buttonSoundToggle'), haptics = $('#buttonHapticsToggle');
   if (sound) {
     sound.checked = readStored('bard_ui_button_sound') !== 'false';
@@ -738,9 +750,7 @@ function getConversationScrollTarget() {
 function updateScrollToBottomButton(event) {
   const conversation = $('.conversation');
   const pageTarget = document.scrollingElement || document.documentElement;
-  if (event?.type === 'scroll') {
-    preferredConversationScrollTarget = event.currentTarget === conversation ? conversation : pageTarget;
-  }
+  if (event?.type === 'scroll') preferredConversationScrollTarget = event.currentTarget === conversation ? conversation : pageTarget;
   const target = getConversationScrollTarget();
   const button = $('#scrollToBottom');
   if (!target || !button) return;
@@ -750,6 +760,14 @@ function updateScrollToBottomButton(event) {
   const shouldShow = target.scrollHeight - viewport - top >= 64;
   button.hidden = !shouldShow;
   button.classList.toggle('is-visible', shouldShow);
+  if (!shouldShow) return;
+  const composer = $('.composer')?.getBoundingClientRect();
+  if (!composer) return;
+  const topPosition = composer.top - button.offsetHeight - 12;
+  if (topPosition < 8 || topPosition + button.offsetHeight > window.innerHeight - 8) {
+    button.hidden = true; button.classList.remove('is-visible'); return;
+  }
+  button.style.top = `${topPosition}px`;
 }
 function scrollToBottom(element, behavior = 'auto') {
   if (!element || bottomScrollFrames.has(element)) return;
