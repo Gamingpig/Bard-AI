@@ -383,39 +383,8 @@ function pauseVoicePreload(error) {
 }
 async function preloadVoiceSamples() {
   try {
+    // Startup only checks local storage; it must never spend provider quota in the background.
     await resetOldVoiceSamples();
-    const pausedUntil = preloadPauseUntil();
-    if (pausedUntil > Date.now()) {
-      const delay = pausedUntil - Date.now();
-      setTimeout(() => { voicePreloadStarted = false; scheduleVoiceSamplePreload(); }, Math.min(delay + 500, 24 * 60 * 60 * 1000));
-      return;
-    }
-    const selected = LIVE_VOICES.find(voice => voice.name === state.voice.voiceName)?.name;
-    const order = [...new Set([selected, ...LIVE_VOICES.map(voice => voice.name)].filter(Boolean))];
-    let halted = false;
-    for (const name of order) {
-      if (navigator.onLine === false) break;
-      const cached = await readVoiceSample(name);
-      if (cached?.data && cached?.mimeType) continue;
-      try {
-        await ensureVoiceSample(name);
-        if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
-        await waitForVoicePreload(1400);
-      } catch (error) {
-        halted = true;
-        pauseVoicePreload(error);
-        if ($('#voicePickerDialog').open && !voicePreviewAudio) {
-          $('#voicePickerStatus').textContent = error?.failureKind === 'provider-quota' || error?.failureKind === 'daily-limit' || error?.status === 429
-            ? `${name} · Anbieter-Kontingent erschöpft. Gespeicherte Hörproben bleiben verfügbar.`
-            : `${name} · Vorladen pausiert, damit keine weiteren Fehlversuche entstehen.`;
-        }
-        break;
-      }
-    }
-    if (halted) {
-      voicePreloadStarted = false;
-      scheduleVoiceSamplePreload();
-    }
     if ($('#voicePickerDialog').open && !voicePreviewAudio) void refreshVoicePickerStatus();
   } catch {}
 }
@@ -426,6 +395,34 @@ function saveVoiceSample(sample) {
     tx.oncomplete = resolve;
     tx.onerror = tx.onabort = () => reject(tx.error || new Error('Hörprobe konnte nicht gespeichert werden.'));
   }));
+}
+function makeLiveVoiceSample(name, chunks, maxBytes = 96_000) {
+  const decoded = chunks.filter(Boolean).map(chunk => atob(chunk));
+  const available = decoded.reduce((total, chunk) => total + chunk.length, 0);
+  const byteLength = Math.min(available - (available % 2), maxBytes - (maxBytes % 2));
+  if (byteLength < 2) return null;
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of decoded) {
+    const take = Math.min(chunk.length, byteLength - offset);
+    for (let index = 0; index < take; index++) bytes[offset++] = chunk.charCodeAt(index);
+    if (offset >= byteLength) break;
+  }
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return { voiceName: name, data: btoa(binary), mimeType: 'audio/pcm;rate=24000', source: 'live-v1' };
+}
+async function cacheTextReplyAsVoiceSample(name, chunks) {
+  try {
+    await resetOldVoiceSamples();
+    if (!name || voiceSampleJobs.has(name)) return;
+    const saved = await readVoiceSample(name);
+    if (saved?.data && saved?.mimeType) return;
+    const sample = makeLiveVoiceSample(name, chunks, 192_000);
+    if (sample) await saveVoiceSample(sample);
+  } catch {}
 }
 
 async function readChatMessages(db, chatId) {
@@ -1171,7 +1168,10 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
       draftRow?.remove();
       const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text) || 'Ich habe keine Textantwort erhalten.', sources: Array.isArray(result.sources) ? result.sources : [], searchSuggestion: result.searchSuggestion || '', created: Date.now() };
       state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
-      if (Array.isArray(result.audio) && result.audio.length) playLiveTextAudio(result.audio, result.audioContext);
+      if (Array.isArray(result.audio) && result.audio.length) {
+        void cacheTextReplyAsVoiceSample(state.voice.voiceName || 'Puck', result.audio);
+        playLiveTextAudio(result.audio, result.audioContext);
+      }
       else result.audioContext?.close().catch(() => {});
     }
     setConnection('online', 'Verbunden');
@@ -2111,20 +2111,9 @@ async function requestVoiceSample(name, run) {
   try {
     if (run !== null && run !== voicePreviewRun) throw new Error('Hörprobe abgebrochen.');
     const chunks = Array.isArray(result.audio) ? result.audio.filter(Boolean) : [];
-    if (!chunks.length) throw new Error('Der Textkanal hat keine Audio-Hörprobe geliefert.');
-    const decoded = chunks.map(chunk => atob(chunk));
-    const byteLength = decoded.reduce((total, chunk) => total + chunk.length, 0);
-    if (!byteLength) throw new Error('Der Textkanal hat eine leere Hörprobe geliefert.');
-    const bytes = new Uint8Array(byteLength);
-    let offset = 0;
-    for (const chunk of decoded) {
-      for (let index = 0; index < chunk.length; index++) bytes[offset++] = chunk.charCodeAt(index);
-    }
-    let binary = '';
-    for (let index = 0; index < bytes.length; index += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-    }
-    return { voiceName: name, data: btoa(binary), mimeType: 'audio/pcm;rate=24000', source: 'live-v1' };
+    const sample = makeLiveVoiceSample(name, chunks, 240_000);
+    if (!sample) throw new Error('Der Textkanal hat keine Audio-Hörprobe geliefert.');
+    return sample;
   } finally {
     result.audioContext?.close().catch(() => {});
   }
@@ -2185,7 +2174,7 @@ async function playVoicePreview(name, button) {
       button.textContent = '▶ Anhören';
       if (error?.failureKind === 'provider-quota') {
         pauseVoicePreload(error);
-        $('#voicePickerStatus').textContent = `${name} · Das Anbieter-Kontingent für Hörproben ist erschöpft. Bereits gespeicherte Proben bleiben abspielbar.`;
+        $('#voicePickerStatus').textContent = `${name} · Der Live-Textkanal meldet ein Kontingentlimit. Bereits gespeicherte Hörproben bleiben abspielbar.`;
       } else if (error?.failureKind === 'daily-limit') {
         pauseVoicePreload(error);
         $('#voicePickerStatus').textContent = `${name} · Das Tageslimit ist erreicht. Bereits gespeicherte Proben bleiben abspielbar.`;
