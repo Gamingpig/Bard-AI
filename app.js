@@ -321,7 +321,7 @@ async function restoreProfile() {
       try { await persistProfile(); writeStored(migrationKey, 'done'); } catch {}
     } else writeStored(migrationKey, 'done');
   }
-  const qualityMigrationKey = 'bard_memory_quality_v2';
+  const qualityMigrationKey = 'bard_memory_quality_v3';
   if (readStored(qualityMigrationKey) !== 'done') {
     const usefulMemory = state.memory.filter(item => !isTemporaryMemoryFact(item));
     if (usefulMemory.length !== state.memory.length) {
@@ -680,13 +680,44 @@ function renderSources(parent, sources) {
   section.append(summary, list); parent.append(section);
 }
 function addTextParts(parent, text) {
-  const paragraphs = String(text || '').split(/\n{2,}/);
-  for (const content of paragraphs) {
-    if (!content.trim()) continue;
-    const p = document.createElement('p');
-    p.textContent = content;
-    parent.append(p);
+  const source = String(text || '');
+  const fence = /```([A-Za-z0-9_+.#-]*)[^\S\r\n]*\r?\n([\s\S]*?)(?:\r?\n?```|$)/g;
+  const addParagraphs = value => {
+    for (const content of value.split(/\n{2,}/)) {
+      if (!content.trim()) continue;
+      const p = document.createElement('p');
+      p.textContent = content;
+      parent.append(p);
+    }
+  };
+  const copyText = async (value, button) => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const input = document.createElement('textarea');
+        input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
+        document.body.append(input); input.select(); document.execCommand('copy'); input.remove();
+      }
+      button.textContent = 'Kopiert ✓';
+      setTimeout(() => { if (button.isConnected) button.textContent = 'Code kopieren'; }, 1400);
+    } catch { button.textContent = 'Kopieren nicht möglich'; }
+  };
+  let cursor = 0, match;
+  while ((match = fence.exec(source))) {
+    addParagraphs(source.slice(cursor, match.index));
+    const panel = document.createElement('section'); panel.className = 'message-code-block';
+    const bar = document.createElement('header'); bar.className = 'message-code-header';
+    const label = document.createElement('span'); label.textContent = match[1] || 'Code';
+    const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'message-code-copy'; copy.textContent = 'Code kopieren';
+    const codeText = match[2].replace(/\r?\n$/, '');
+    copy.addEventListener('click', () => void copyText(codeText, copy));
+    bar.append(label, copy);
+    const pre = document.createElement('pre'); const code = document.createElement('code');
+    if (match[1]) code.className = `language-${match[1].toLowerCase()}`;
+    code.textContent = codeText; pre.append(code); panel.append(bar, pre); parent.append(panel);
+    cursor = fence.lastIndex;
   }
+  addParagraphs(source.slice(cursor));
 }
 const bottomScrollFrames = new WeakMap();
 function getConversationScrollTarget() {
@@ -825,7 +856,7 @@ function renderMemory() {
 }
 function remember(value) {
   const fact = String(value || '').replace(/[\s.!?]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
-  if (!fact || /\b(passw(?:ort|ord)|api[- ]?key|zugangsdaten|token|secret|cvv|pin)\b/i.test(fact)) return false;
+  if (!fact || isSensitiveMemoryFact(fact) || /\b(passw(?:ort|ord)|api[- ]?key|zugangsdaten|token|secret|cvv|pin)\b/i.test(fact)) return false;
   const key = fact.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const existing = state.memory.findIndex(item => item.toLocaleLowerCase('de').replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === key);
   if (existing >= 0) state.memory.splice(existing, 1);
@@ -860,16 +891,27 @@ function captureConversationMemory(text) {
   const stableFactPatterns = [
     /\b(ich mag|ich liebe|ich bevorzuge|ich interessiere mich für|ich arbeite als|ich arbeite an|ich lerne gerade|ich studiere|ich spreche|ich nutze|ich verwende|ich spiele gern|ich spiele gerne|ich mache gern|ich mache gerne|ich fahre gern|ich fahre gerne|ich gehe gern|ich gehe gerne|ich sammle|ich entwickle|ich baue|mein ziel ist|mir ist wichtig|i like|i love|i prefer|i work as|i am learning|i study)\s+([^.!?\n]{2,140})/iu,
     /\b(mein(?:e|en)? lieblings(?:farbe|film|serie|spiel|musik|band|buch|essen|getränk|sport|verein)? ist)\s+([^.!?\n]{2,100})/iu,
-    /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu
+    /\b(ich habe (?:einen hund|eine katze|ein haustier|einen bruder|eine schwester|kinder))(?:\s+(?:namens|mit namen)\s+([^.!?\n]{2,80}))?/iu,
+    /\b(ich bin (?:auszubildende[r]?|angehende[r]?|student(?:in)?|schüler(?:in)?|fachinformatiker(?:in)?|entwickler(?:in)?|selbstständig(?:e[r])?))\s+([^.!?\n]{2,100})/iu,
+    /\b(ich mache (?:eine )?ausbildung als|meine ausbildung ist|ich studiere|ich arbeite als|ich arbeite bei|mein beruf ist)\s+([^.!?\n]{2,120})/iu,
+    /\b(ich spreche|ich lerne)\s+(deutsch|englisch|französisch|spanisch|italienisch|niederländisch|polnisch|türkisch|arabisch|russisch|japanisch|chinesisch)(?:\s+(?:und|sowie)\s+([\p{L}]+))?/iu,
+    /\b(ich nutze|ich verwende)\s+(windows|macos|linux|android|ios|iphone|ipad|chromebook|screenreader|bildschirmleser)(?:\s+([^.!?\n]{2,50}))?/iu,
+    /\b(ich möchte langfristig|mein langfristiges ziel ist|ich plane langfristig|ich baue dauerhaft an)\s+([^.!?\n]{2,120})/iu
   ];
   const capturedFacts = new Set();
   if (!isTemporary) for (const pattern of stableFactPatterns) {
     const match = normalized.match(pattern);
     if (!match) continue;
-    const fact = [match[1], match[2]].filter(Boolean).join(' ');
+    const fact = [match[1], ...match.slice(2)].filter(Boolean).join(' ');
     if (fact && !capturedFacts.has(fact.toLocaleLowerCase('de'))) {
       capturedFacts.add(fact.toLocaleLowerCase('de'));
-      changed = remember(`Profilkontext (bei passenden Antworten berücksichtigen): ${fact}`) || changed;
+      const category = /liebe|mag|bevorzuge|interessiere/i.test(match[1] || '') ? 'Dauerhafte Vorliebe'
+        : /ziel|plane|möchte langfristig/i.test(match[1] || '') ? 'Langfristiges Ziel'
+        : /ausbildung|studier|arbeite|beruf|entwickler|lerne/i.test(match[1] || '') ? 'Arbeit und Lernen'
+        : /spreche|sprache/i.test(match[1] || '') ? 'Sprache'
+        : /hund|katze|haustier|bruder|schwester|kinder/i.test(match[1] || '') ? 'Persönlicher Kontext'
+        : 'Nutzerkontext';
+      changed = remember(`${category} (aus eigener Aussage; bei passenden Antworten berücksichtigen): ${fact}`) || changed;
     }
   }
   return changed;
@@ -1099,6 +1141,8 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     : codePreview
       ? text + '\n\nErstelle die angeforderte Visualisierung als eigenständige, sofort lauffähige HTML-Vorschau. Rufe dafür show_web_preview mit vollständigem HTML auf. Falls der Tool-Aufruf nicht verfügbar ist, gib dasselbe Dokument in einem ```html-Codeblock aus, damit die App es direkt als Vorschau anzeigen kann. Keine externen Dateien oder Netzwerkzugriffe. Für 3D-Objekte: verwende eine sichtbare, kontrastreiche CSS-3D- oder Canvas-Darstellung mit Bewegung, Startposition und 2D/SVG-Fallback; setze eine passende Perspektive, Größe und Tiefe, damit sie auf kleinen und großen Displays sichtbar bleibt. Füge den mobilen Viewport hinzu. Gib außerhalb der Vorschau höchstens eine kurze Erklärung.'
       : text + '\n\nAntworte vollständig genug, dass die Frage beantwortet ist. Vermeide unnötige Wiederholungen und gib keine internen Gedanken aus. Behandle mitgesendete Memory-Einträge als Profilkontext: nutze sie nur, wenn sie zur aktuellen Frage passen, und mache aus zeitlich begrenzten Wünschen keine dauerhaften Vorlieben. Wenn die integrierte Google-Suche verfügbar und für aktuelle oder unsichere Fakten, Nachrichten, Preise, Produktvergleiche oder Quellen hilfreich ist, nutze sie und biete sie bei passender Gelegenheit proaktiv an; verwende sie nicht für einfache Alltagsfragen.';
+  const capabilityGuidance = 'Nutze passende Funktionen dieser PWA aktiv, wenn sie der Person wirklich helfen: Google-Suche für aktuelle oder unsichere Fakten; sichtbare HTML/SVG-Vorschau für angefragte Webseiten, Animationen, Diagramme und interaktive Beispiele; Bildanalyse, wenn ein Bild oder eine Datei angehängt wurde; Bildgenerierung nur für echte Bildwünsche. Biete eine sinnvolle Funktion gelegentlich von dir aus an, aber liste nicht bei jeder Antwort alle Möglichkeiten auf. Wenn du Code schreibst, liefere ihn in einem vollständigen Markdown-Codeblock mit Sprachkennung, damit die App ihn sichtbar darstellen und kopieren kann. Behaupte nie, eine Vorschau oder ein Bild sei erstellt, solange kein Inhalt tatsächlich an die App übergeben wurde.';
+  const guidedLivePrompt = options.voiceSample ? livePrompt : livePrompt + '\n\n' + capabilityGuidance;
   const fullContext = options.voiceSample ? [] : buildLiveContext().slice(0, -1);
   // Long prompts get compact recent context to keep their input-token footprint lower.
   const requestContext = text.length > 1200
@@ -1118,7 +1162,7 @@ async function requestLiveTextReply(text, codePreview = false, onUpdate = () => 
     try {
       const session = await requestWorker('/api/live-token', candidate);
       if (!session.token || !session.model || !session.config) throw new Error('Der Live-Server hat keine sichere Sitzung bereitgestellt.');
-      const result = await liveTextExchange(session, livePrompt, audioContext, onUpdate, imageAttachment, options);
+      const result = await liveTextExchange(session, guidedLivePrompt, audioContext, onUpdate, imageAttachment, options);
       recordLiveModelResult(session.model, performance.now() - startedAt, true);
       return result;
     } catch (error) {
@@ -1199,10 +1243,28 @@ async function submitPrompt(text = $('#prompt').value.trim()) {
   $('#prompt').value = ''; resizePrompt(); state.busy = true; typing(true); setConnection('busy', 'Denkt nach');
   try {
     if (state.imageMode && !file) {
-      const result = await requestWorker('/api/image', { prompt: requestText, userName: state.name, memory: state.memory, context: buildLiveContext().slice(0, -1) });
-      if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
-      const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text || 'Hier ist dein Bild.'), image: { mimeType: result.image.mimeType || 'image/png', data: result.image.data }, created: Date.now() };
-      state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
+      let result;
+      try {
+        result = await requestWorker('/api/image', { prompt: requestText, userName: state.name, memory: state.memory, context: buildLiveContext().slice(0, -1) });
+        if (!result.image?.data) throw new Error('Der Bilddienst hat kein Bild zurückgegeben.');
+        const answer = { id: crypto.randomUUID(), role: 'assistant', text: safeText(result.text || 'Hier ist dein Bild.'), image: { mimeType: result.image.mimeType || 'image/png', data: result.image.data }, created: Date.now() };
+        state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
+      } catch (imageError) {
+        if (!(isProviderQuotaError(imageError) || imageError?.failureKind === 'daily-limit' || imageError?.status === 429)) throw imageError;
+        const fallback = await requestLiveTextReply(
+          'Das Bildmodell meldet gerade ein Kontingentlimit. Erstelle statt eines Rasterbildes eine einfache, eigenständige und sichtbare SVG/HTML-Vorschau zum folgenden Wunsch. Erkläre kurz, dass dies eine codebasierte Alternative ist. Nutzerwunsch: ' + requestText,
+          true, () => {}
+        );
+        const answer = {
+          id: crypto.randomUUID(), role: 'assistant',
+          text: safeText('Das Bildmodell ist gerade begrenzt. Hier ist stattdessen eine codebasierte Vorschau.\n\n' + fallback.text),
+          sources: Array.isArray(fallback.sources) ? fallback.sources : [],
+          searchSuggestion: fallback.searchSuggestion || '', created: Date.now()
+        };
+        state.messages.push(answer); renderMessage(answer); void persistMessages().catch(() => {});
+        if (Array.isArray(fallback.audio) && fallback.audio.length) playLiveTextAudio(fallback.audio, fallback.audioContext);
+        else fallback.audioContext?.close().catch(() => {});
+      }
     } else {
       const codePreview = requestsCodePreview(requestText);
       let result, draftRow = null;
